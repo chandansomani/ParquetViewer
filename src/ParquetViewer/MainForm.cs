@@ -178,10 +178,6 @@ namespace ParquetViewer
             }
 
             this.alwaysLoadAllRecordsToolStripMenuItem.Checked = AppSettings.AlwaysLoadAllRecords;
-
-            //Get user's consent to gather analytics; and update the toolstrip menu item accordingly
-            Program.GetUserConsentToGatherAnalytics();
-            this.shareAnonymousUsageDataToolStripMenuItem.Checked = AppSettings.AnalyticsDataGatheringConsent;
         }
 
         private async Task<List<string>?> OpenFieldSelectionDialog(bool forceOpenDialog)
@@ -384,7 +380,6 @@ namespace ParquetViewer
             {
                 this.SelectedFields = fieldList; //triggers a file load
                 AppSettings.OpenedFileCount++;
-                Program.AskUserForFileExtensionAssociation();
             }
         }
 
