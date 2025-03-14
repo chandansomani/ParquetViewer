@@ -157,69 +157,6 @@ namespace ParquetDuplicateFinder
             }
         }
 
-
-        /**
-        static void DisplayParquetStats_old(ParquetEngine parquetEngine, string filePath)
-        {
-            Console.WriteLine("\n===== PARQUET FILE STATISTICS =====");
-
-            // File info
-            bool isFolder = Directory.Exists(filePath);
-            Console.WriteLine($"Type: {(isFolder ? "Folder" : "File")}");
-            Console.WriteLine($"Path: {filePath}");
-
-            // Records info
-            Console.WriteLine($"Total Records: {parquetEngine.RecordCount:N0}");
-            Console.WriteLine($"Number of Partitions: {parquetEngine.NumberOfPartitions}");
-            Console.WriteLine($"Number of Row Groups: {parquetEngine.ThriftMetadata.RowGroups.Count}");
-
-            // Column info
-            var fields = parquetEngine.Schema.Fields;
-            Console.WriteLine($"\nColumns: {fields.Count}");
-            Console.WriteLine("\nColumn Details:");
-            Console.WriteLine(new string('-', 80));
-            Console.WriteLine($"{"Position",-8} | {"Name",-30} | {"Type",-20} | {"Repetition",-10}");
-            Console.WriteLine(new string('-', 80));
-
-            for (int i = 0; i < fields.Count; i++)
-            {
-                var field = fields[i];
-                Console.WriteLine($"{i,-8} | {field.Name,-30} | {field.DataType,-20} | {field.RepetitionType,-10}");
-            }
-
-            Console.WriteLine(new string('-', 80));
-
-            // Data types summary
-            var dataTypeCounts = fields.GroupBy(f => f.DataType)
-                .Select(g => new { Type = g.Key, Count = g.Count() })
-                .OrderByDescending(x => x.Count);
-
-            Console.WriteLine("\nData Type Summary:");
-            foreach (var typeCount in dataTypeCounts)
-            {
-                Console.WriteLine($"  {typeCount.Type,-20}: {typeCount.Count,3} column(s)");
-            }
-
-            // Physical storage info (if available)
-            if (File.Exists(filePath))
-            {
-                var fileInfo = new FileInfo(filePath);
-                Console.WriteLine($"\nFile Size: {FormatFileSize(fileInfo.Length)}");
-            }
-            else if (Directory.Exists(filePath))
-            {
-                var dirInfo = new DirectoryInfo(filePath);
-                var files = dirInfo.GetFiles("*.parquet", SearchOption.AllDirectories);
-                long totalSize = files.Sum(f => f.Length);
-                Console.WriteLine($"\nTotal Size of Parquet Files: {FormatFileSize(totalSize)}");
-                Console.WriteLine($"Number of Parquet Files: {files.Length}");
-            }
-
-            Console.WriteLine("\n===================================\n");
-        }
-         * 
-         */
-
         static void DisplayParquetStats(ParquetEngine parquetEngine, string filePath)
         {
             Console.WriteLine("\n===== PARQUET FILE STATISTICS =====");
@@ -277,7 +214,6 @@ namespace ParquetDuplicateFinder
             Console.WriteLine("\n===================================\n");
         }
 
-        // Helper method to format file size
         static string FormatFileSize(long bytes)
         {
             string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
