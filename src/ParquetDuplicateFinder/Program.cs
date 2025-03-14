@@ -1,6 +1,8 @@
 ﻿using ParquetViewer.Engine;
 using ParquetViewer.Engine.Exceptions;
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace ParquetDuplicateFinder
 {
@@ -27,7 +29,7 @@ namespace ParquetDuplicateFinder
                     return;
                 }
 
-                var dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
+                DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
                 DuplicateFinder.FindAndDisplayDuplicates(dataTable, fieldsToCheck, options.Verbose, options.Limit);
             }
             catch (Exception ex)
@@ -286,12 +288,20 @@ namespace ParquetDuplicateFinder
 
         private static string CreateKey(DataRow row, List<string> fieldsToCheck)
         {
-            // Create a unique key for the row based on the specified fields
-            var keyValues = fieldsToCheck
-                .Select(field => row[field]?.ToString() ?? "NULL")
-                .ToArray();
+            // Concatenate the field values into a single string
+            var keyBuilder = new StringBuilder();
+            foreach (var field in fieldsToCheck)
+            {
+                keyBuilder.Append(row[field]?.ToString() ?? "NULL");
+                keyBuilder.Append("|"); // Separator
+            }
 
-            return string.Join("|", keyValues);
+            // Compute the SHA256 hash of the concatenated string
+            using (var sha256 = SHA256.Create())
+            {
+                var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(keyBuilder.ToString()));
+                return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+            }
         }
     }
 
