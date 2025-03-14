@@ -28,6 +28,7 @@ namespace ParquetDuplicateFinder
             int limit = -1;
             bool showStats = false;
             bool findDuplicates = true;
+            List<int> columnIndicesToCheck = new List<int>(); // New list for column indices
 
             // Parse additional arguments
             for (int i = 1; i < args.Length; i++)
@@ -37,6 +38,25 @@ namespace ParquetDuplicateFinder
                     if (i + 1 < args.Length)
                     {
                         fieldsToCheck.AddRange(args[i + 1].Split(',').Select(f => f.Trim()));
+                        i++;
+                    }
+                }
+                else if (args[i] == "-c" || args[i] == "--columns") // New parameter for column indices
+                {
+                    if (i + 1 < args.Length)
+                    {
+                        var columnNumbers = args[i + 1].Split(',').Select(f => f.Trim());
+                        foreach (var number in columnNumbers)
+                        {
+                            if (int.TryParse(number, out int columnIndex))
+                            {
+                                columnIndicesToCheck.Add(columnIndex);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Warning: Invalid column number '{number}'. Skipping.");
+                            }
+                        }
                         i++;
                     }
                 }
@@ -86,11 +106,32 @@ namespace ParquetDuplicateFinder
                 }
 
                 // Get all available fields if none specified
-                if (fieldsToCheck.Count == 0)
+                if (fieldsToCheck.Count == 0 && columnIndicesToCheck.Count == 0)
                 {
                     // Get the field names from the schema
                     fieldsToCheck = parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
-                    Console.WriteLine("No fields specified, using all available fields for duplicate checking.");
+                    Console.WriteLine("No fields or columns specified, using all available fields for duplicate checking.");
+                }
+                else if (columnIndicesToCheck.Count > 0) // Use column indices if specified
+                {
+                    var availableFields = parquetEngine.Schema.Fields.ToList();
+                    foreach (var index in columnIndicesToCheck)
+                    {
+                        if (index >= 0 && index < availableFields.Count)
+                        {
+                            fieldsToCheck.Add(availableFields[index].Name);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Warning: Column index {index} is out of range. Skipping.");
+                        }
+                    }
+
+                    if (fieldsToCheck.Count == 0)
+                    {
+                        Console.WriteLine("Error: No valid columns to check for duplicates.");
+                        return;
+                    }
                 }
                 else
                 {
