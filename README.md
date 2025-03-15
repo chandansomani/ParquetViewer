@@ -1,32 +1,109 @@
-# ParquetViewer
-Simple Windows desktop application for viewing & querying Apache Parquet files. 
+# Parquet File Processor
 
-[![Main UI](https://github.com/mukunku/ParquetViewer/blob/main/wiki_images/main_screenshot5.png)](#)
+A command-line utility for processing, viewing, and analyzing Parquet file metadata and structure, find Duplicates with specified columns.
 
-# Summary
-ParquetViewer is a utility to quickly view Apache Parquet files on Windows desktop machines. 
+## Overview
 
-If you'd like to add any new features feel free to send a pull request.
+Parquet File Processor provides a simple way to inspect and work with Parquet files, displaying key metadata including schema information, column types, record counts, and file size statistics. It supports both individual Parquet files and directories containing multiple Parquet files.
 
-Some key features:
-* View parquet file metadata
-* Run simple sql queries on parquet data
-* Open single or partitioned files
+## Credits
 
-# Download
-Releases can be found here: https://github.com/mukunku/ParquetViewer/releases
+This project is forked from [ParquetViewer](https://github.com/mukunku/ParquetViewer/) by [Mukunku](https://github.com/mukunku). The original repository provided the foundation for this expanded command-line tool.
 
-Details on how to use the utility can be found in [the Wiki](https://github.com/mukunku/ParquetViewer/wiki)
+## Features
 
-# Analytics
-Users can opt-in to share anonymous usage data to help make the app better. [^1]
+- Display basic Parquet file metadata
+- View column schemas and types
+- Show record count and partition information 
+- Analyze row group structure
+- Provide data type distribution summary
+- Calculate storage size information
+- Process both individual files and directories of Parquet files
+- Find Duplicates present in Parquet files, with specfied columns.
 
-Checkout the [ParquetViewer Analytics Dashboard](https://app.amplitude.com/analytics/share/7207c0b64c154e979afd7082980d6dd6) if you're interested!
+## Command-line Usage
 
-[^1]: Full privacy policy here: https://github.com/mukunku/ParquetViewer/wiki/Privacy-Policy
+```
+ParquetFileProcessor [options] <file-or-directory-path>
 
-# Technical Details
-The latest version of this project was written in C# using Microsoft Visual Studio Community 2022 v17.12.3 and .NET 8
+Options:
+  -s, --stats       Display statistics about the Parquet file(s)
+  -m, --metadata    Show detailed metadata
+  -o, --output      Specify output format (console, json, csv)
+  -h, --help        Show help information
+```
 
-# Acknowledgements
-This utility would not be possible without: https://github.com/aloneguid/parquet-dotnet
+## Example Usage
+
+```bash
+# Display statistics for a single file
+ParquetFileProcessor --stats /path/to/data.parquet
+
+# Process all parquet files in a directory
+ParquetFileProcessor --stats /path/to/parquet/directory/
+
+# Export metadata as JSON
+ParquetFileProcessor --metadata --output json /path/to/data.parquet > metadata.json
+```
+
+## Output Example
+
+```
+===== PARQUET FILE STATISTICS =====
+Type: File
+Path: C:\Data\sample.parquet
+Total Records: 10,000
+Number of Partitions: 1
+Number of Row Groups: 1
+
+Columns: 5
+
+Column Details:
+--------------------------------------------------------------------------------
+Position | Name                           | SchemaType          
+--------------------------------------------------------------------------------
+0        | id                             | Data                
+1        | name                           | Data                
+2        | timestamp                      | Data                
+3        | value                          | Data                
+4        | attributes                     | Struct              
+--------------------------------------------------------------------------------
+
+Schema Type Summary:
+  Data                : 4 column(s)
+  Struct              : 1 column(s)
+
+File Size: 1.25 MB
+
+===================================
+```
+
+## Implementation Details
+
+The processor utilizes the Parquet.Schema namespace to extract and display schema information. It builds upon the foundation provided by ParquetViewer, extending it with command-line functionality and additional processing features.
+
+## Requirements
+
+- .NET 6.0 or higher
+- Parquet library dependencies
+
+## Installation
+
+```bash
+# Install from NuGet
+dotnet tool install -g ParquetFileProcessor
+
+# Or build from source
+git clone https://github.com/yourusername/ParquetFileProcessor.git
+cd ParquetFileProcessor
+dotnet build
+dotnet publish -c Release
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the same license as the original ParquetViewer repository.
