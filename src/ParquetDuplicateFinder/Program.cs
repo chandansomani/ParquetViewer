@@ -19,7 +19,7 @@ namespace ParquetDuplicateFinder
                 if (options.ShowStats)
                 {
                     ParquetStatistics.Display(parquetEngine, options.FilePath);
-                    if (options.StatsOnly) return;
+                    //if (options.StatsOnly) return;
                 }
 
                 var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options.Fields, options.ColumnIndices);
@@ -29,8 +29,17 @@ namespace ParquetDuplicateFinder
                     return;
                 }
 
-                DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
-                DuplicateFinder.FindAndDisplayDuplicates(dataTable, fieldsToCheck, options.Verbose, options.Limit);
+                if (options.PrintData)
+                {
+                    DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
+                    if(options.RowLimit > 0) PrintData.DisplayData(dataTable, options.RowLimit);
+                    else PrintData.DisplayData(dataTable);
+                }
+
+                if (options.FindDuplicates) { 
+                    DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
+                    DuplicateFinder.FindAndDisplayDuplicates(dataTable, fieldsToCheck, options.Verbose, options.Limit);                
+                }
             }
             catch (Exception ex)
             {
@@ -105,11 +114,21 @@ namespace ParquetDuplicateFinder
                         break;
                     case "-s":
                     case "--stats":
-                        options.ShowStats = true;
-                        break;
                     case "--stats-only":
                         options.ShowStats = true;
-                        options.StatsOnly = true;
+                        //options.StatsOnly = true;
+                        break;
+                    case "-d":
+                    case "--duplicates":
+                        options.FindDuplicates = true;
+                        break;
+                    case "-pf":
+                        options.PrintData = true;
+                        if (i + 1 < args.Length && long.TryParse(args[i + 1], out long rowLimit))
+                        {
+                            options.RowLimit = rowLimit;
+                            i++;
+                        }
                         break;
                     case "-h":
                     case "--help":
@@ -128,10 +147,14 @@ namespace ParquetDuplicateFinder
             Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
             Console.WriteLine("\nOptions:");
             Console.WriteLine("  -f, --fields <field1,field2,...>  Specify fields to check for duplicates (default: all fields)");
+            Console.WriteLine("  -c, --columns <field1,field2,...> Specify Column Position to check for duplicates (default: all fields)");
             Console.WriteLine("  -v, --verbose                     Show all fields for duplicate records");
             Console.WriteLine("  -l, --limit <number>              Limit number of duplicate groups to display");
             Console.WriteLine("  -s, --stats                       Display statistics about the Parquet file");
-            Console.WriteLine("  --stats-only                      Display only statistics (no duplicate checking)");
+            //Console.WriteLine("  --stats-only                      Display only statistics (no duplicate checking)");
+            Console.WriteLine("  -d,                               Find and Display Duplicates, use with -f Options");
+            Console.WriteLine("  -pf,                              Display Parquet Data all Records, use with -f Options");
+            Console.WriteLine("  -pf <number>,                     Display Parquet Data first n records, use with -f Options");
             Console.WriteLine("  -h, --help                        Show this help message");
         }
     }
@@ -145,7 +168,10 @@ namespace ParquetDuplicateFinder
         public bool Verbose { get; set; }
         public int Limit { get; set; } = -1;
         public bool ShowStats { get; set; }
-        public bool StatsOnly { get; set; }
+        //public bool StatsOnly { get; set; }
+        public bool FindDuplicates { get; set; }
+        public bool PrintData { get; set; }
+        public long RowLimit {  get; set; }
     }
 
     // Parquet file operations
@@ -260,24 +286,36 @@ namespace ParquetDuplicateFinder
 
                 if (verbose)
                 {
+                    Console.Write($"{"#####",5}:");
+                    foreach (DataColumn column in dataTable.Columns)
+                    {
+                        Console.Write($"{column.ColumnName,-36} | ");
+                    }
+                    Console.WriteLine("");
                     int recordNumber = 1;
                     foreach (var row in group.Value)
                     {
-                        Console.WriteLine($"  Record #{recordNumber++}:");
+                        Console.Write($"{recordNumber++,5}:");
                         foreach (DataColumn column in dataTable.Columns)
                         {
                             var value = row[column];
-                            Console.WriteLine($"    {column.ColumnName}: {value?.ToString() ?? "NULL"}");
+                            Console.Write($"{value?.ToString()[..36] ?? "NULL", -36} | ");
                         }
+                        Console.WriteLine("");
                     }
                 }
                 else
                 {
                     foreach (var field in fieldsToCheck)
                     {
-                        Console.WriteLine($"  {field}: {group.Value[0][field]}");
+                        Console.Write($"{field,-36} | ");
                     }
-                    Console.WriteLine($"  Count: {group.Value.Count}");
+                    Console.WriteLine();
+                    foreach (var field in fieldsToCheck)
+                    {
+                        Console.Write($"{group.Value[0][field].ToString()[..36], -36} | ");
+                    }
+                    Console.WriteLine();
                 }
             }
 
@@ -305,6 +343,61 @@ namespace ParquetDuplicateFinder
         }
     }
 
+    static class PrintData
+    {
+        public static void DisplayData(DataTable dataTable)
+        {
+            foreach (DataColumn column in dataTable.Columns)
+            {
+                Console.Write($"{column.ColumnName,-36} | ");
+            }
+            Console.WriteLine();
+
+            // Print rows
+            foreach (DataRow row in dataTable.Rows)
+            {
+                foreach (DataColumn column in dataTable.Columns)
+                {
+                    var value = row[column]?.ToString() ?? "NULL";
+                    if (value.Length > 36)
+                    {
+                        value = value.Substring(0, 36);
+                    }
+                    Console.Write($"{value,-36} | ");
+                }
+                Console.WriteLine();
+            }
+        }
+
+        public static void DisplayData(DataTable dataTable, long limit)
+        {
+            foreach (DataColumn column in dataTable.Columns)
+            {
+                Console.Write($"{column.ColumnName,-36} | ");
+            }
+            Console.WriteLine();
+
+            long rowNo = 0;
+            foreach (DataRow row in dataTable.Rows)
+            {
+                if(rowNo < limit)
+                {
+                    foreach (DataColumn column in dataTable.Columns)
+                    {
+                        var value = row[column]?.ToString() ?? "NULL";
+                        if (value.Length > 36)
+                        {
+                            value = value.Substring(0, 36);
+                        }
+                        Console.Write($"{value,-36} | ");
+                    }
+                    Console.WriteLine();
+                    rowNo++;
+                }
+            }
+        }
+    }
+
     // Statistics display logic
     static class ParquetStatistics
     {
@@ -314,8 +407,8 @@ namespace ParquetDuplicateFinder
             Console.WriteLine($"Type: {(Directory.Exists(filePath) ? "Folder" : "File")}");
             Console.WriteLine($"Path: {filePath}");
             Console.WriteLine($"Total Records: {parquetEngine.RecordCount:N0}");
-            Console.WriteLine($"Number of Partitions: {parquetEngine.NumberOfPartitions}");
-            Console.WriteLine($"Number of Row Groups: {parquetEngine.ThriftMetadata.RowGroups.Count}");
+            //Console.WriteLine($"Number of Partitions: {parquetEngine.NumberOfPartitions}");
+            //Console.WriteLine($"Number of Row Groups: {parquetEngine.ThriftMetadata.RowGroups.Count}");
 
             var dataFields = parquetEngine.Schema.DataFields;
             Console.WriteLine($"\nColumns: {dataFields.Length}");
