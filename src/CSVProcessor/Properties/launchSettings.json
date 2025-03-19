@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "CSVProcessor": {
+      "commandName": "Project",
+      //"commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf -fd -h -f Department,Location",
+      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf -fd -h"
+    },
+    "Print 10": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf 10 -f Department,Location -h"
+    }
+  }
+}
