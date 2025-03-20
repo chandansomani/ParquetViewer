@@ -1,6 +1,9 @@
-﻿using ParquetViewer.Engine;
+﻿using CsvHelper.Configuration;
+using CsvHelper;
+using ParquetViewer.Engine;
 using ParquetViewer.Engine.Exceptions;
 using System.Data;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -14,31 +17,39 @@ namespace ParquetDuplicateFinder
             {
                 var options = CommandLineParser.Parse(args);
                 if (options == null) return; // Help or invalid arguments
-
-                var parquetEngine = await ParquetOperations.OpenFileOrFolderAsync(options.FilePath);
-                if (options.ShowStats)
+                if (options != null)
                 {
-                    ParquetStatistics.Display(parquetEngine, options.FilePath);
-                    //if (options.StatsOnly) return;
+                    CommandLineParser.PrintCurrentConfiguration(options);
                 }
 
-                var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options.Fields, options.ColumnIndices);
-                if (fieldsToCheck.Count == 0)
+                DataTable dataTable;
+
+                if (options.IsCsv)
                 {
-                    Console.WriteLine("Error: No valid fields to check for duplicates.");
-                    return;
+                    dataTable = CsvOperations.ReadCsv(options.FilePath, options.Delimiter, options.HasHeader);
+                }
+                else
+                {
+                    var parquetEngine = await ParquetOperations.OpenFileOrFolderAsync(options.FilePath);
+                    var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options.Fields, options.ColumnIndices);
+                    dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
                 }
 
                 if (options.PrintData)
                 {
-                    DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
-                    if(options.RowLimit > 0) PrintData.DisplayData(dataTable, options.RowLimit);
-                    else PrintData.DisplayData(dataTable);
+                    PrintData.DisplayData(dataTable, options.RowLimit);
                 }
 
-                if (options.FindDuplicates) { 
-                    DataTable dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
-                    DuplicateFinder.FindAndDisplayDuplicates(dataTable, fieldsToCheck, options.Verbose, options.Limit);                
+                if (options.FindDuplicates)
+                {
+                    if (options.Fields.Count == 0)
+                    {
+                        Console.WriteLine("No fields specified. Using all columns.");
+                        options.Fields = dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+                    }
+                    Console.WriteLine($"Fields used for duplicate check [{options.Fields.Count}]: {string.Join(", ", options.Fields)}");
+
+                    DuplicateFinder.FindAndDisplayDuplicates(dataTable, options.Fields, options.Verbose, options.Limit);
                 }
             }
             catch (Exception ex)
@@ -77,10 +88,32 @@ namespace ParquetDuplicateFinder
 
             var options = new Options { FilePath = args[0] };
 
+            var validArgs = new HashSet<string>
+            {
+                "--csv", "--delimiter", "--header", "-f", "--fields",
+                "-c", "--columns", "-v", "--verbose", "-l", "--limit",
+                "-d", "--findDuplicates", "-pf", "--printData", "-h", "--help"
+            };
+
             for (int i = 1; i < args.Length; i++)
             {
+                string arg = args[i];
+
                 switch (args[i])
                 {
+                    case "--csv":
+                        options.IsCsv = true;
+                        break;
+                    case "--delimiter":
+                        if (i + 1 < args.Length)
+                        {
+                            options.Delimiter = args[i + 1][0];
+                            i++;
+                        }
+                        break;
+                    case "--header":
+                        options.HasHeader = true;
+                        break;
                     case "-f":
                     case "--fields":
                         if (i + 1 < args.Length)
@@ -93,7 +126,7 @@ namespace ParquetDuplicateFinder
                     case "--columns":
                         if (i + 1 < args.Length)
                         {
-                            options.ColumnIndices = args[i + 1].Split(',').Select(f => f.Trim())
+                            options.ColumnIndices = args[i + 1].Split(',')
                                 .Where(n => int.TryParse(n, out _))
                                 .Select(int.Parse)
                                 .ToList();
@@ -112,49 +145,71 @@ namespace ParquetDuplicateFinder
                             i++;
                         }
                         break;
-                    case "-s":
-                    case "--stats":
-                    case "--stats-only":
-                        options.ShowStats = true;
-                        //options.StatsOnly = true;
-                        break;
                     case "-d":
-                    case "--duplicates":
+                    case "--findDuplicates":
                         options.FindDuplicates = true;
                         break;
                     case "-pf":
+                    case "--printData":
                         options.PrintData = true;
                         if (i + 1 < args.Length && long.TryParse(args[i + 1], out long rowLimit))
                         {
                             options.RowLimit = rowLimit;
                             i++;
                         }
+                        else
+                        {
+                            options.RowLimit = -1;
+                        }
                         break;
                     case "-h":
                     case "--help":
                         PrintUsage();
                         return null;
+                    default:
+                        if (!validArgs.Contains(arg))
+                        {
+                            Console.WriteLine($"Invalid argument: {arg}");
+                            PrintUsage();
+                            return null;
+                        }
+                        break;
+
                 }
             }
 
             return options;
         }
 
+        public static void PrintCurrentConfiguration(Options options)
+        {
+            Console.WriteLine($@"
+                ===== Command Line Configuration =====
+                File: {options.FilePath}
+                Mode: {(options.IsCsv ? "CSV" : "Parquet")} | Delimiter: '{options.Delimiter}' | Header: {options.HasHeader}
+                Fields: {(options.Fields.Count > 0 ? string.Join(", ", options.Fields) : "All Columns")}
+                Columns: {(options.ColumnIndices.Count > 0 ? string.Join(", ", options.ColumnIndices) : "N/A")}
+                Verbose: {options.Verbose} | Duplicates: {options.FindDuplicates} | Limit: {(options.Limit > 0 ? options.Limit : "Unlimited")}
+                Print Data: {options.PrintData} | Row Limit: {(options.RowLimit > 0 ? options.RowLimit : "All")}
+                ====================================
+            ");
+        }
+
         private static void PrintUsage()
         {
-            Console.WriteLine("ParquetDuplicateFinder - Find duplicate records in Parquet files");
+            Console.WriteLine("ParquetDuplicateFinder - Find duplicate records in Parquet or CSV files");
             Console.WriteLine("\nUsage:");
             Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
             Console.WriteLine("\nOptions:");
-            Console.WriteLine("  -f, --fields <field1,field2,...>  Specify fields to check for duplicates (default: all fields)");
-            Console.WriteLine("  -c, --columns <field1,field2,...> Specify Column Position to check for duplicates (default: all fields)");
+            Console.WriteLine("  --csv                            Process a CSV file instead of Parquet");
+            Console.WriteLine("  --delimiter <char>                Specify CSV delimiter (default: ',')");
+            Console.WriteLine("  --header                         Treat first row as CSV header");
+            Console.WriteLine("  -f, --fields <field1,field2,...>  Specify fields to check for duplicates");
+            Console.WriteLine("  -c, --columns <index1,index2,...> Specify column indices for duplicates");
             Console.WriteLine("  -v, --verbose                     Show all fields for duplicate records");
             Console.WriteLine("  -l, --limit <number>              Limit number of duplicate groups to display");
-            Console.WriteLine("  -s, --stats                       Display statistics about the Parquet file");
-            //Console.WriteLine("  --stats-only                      Display only statistics (no duplicate checking)");
-            Console.WriteLine("  -d,                               Find and Display Duplicates, use with -f Options");
-            Console.WriteLine("  -pf,                              Display Parquet Data all Records, use with -f Options");
-            Console.WriteLine("  -pf <number>,                     Display Parquet Data first n records, use with -f Options");
+            Console.WriteLine("  -d,                               Find and Display Duplicates");
+            Console.WriteLine("  -pf,                              Display Parquet/CSV Data");
             Console.WriteLine("  -h, --help                        Show this help message");
         }
     }
@@ -167,11 +222,63 @@ namespace ParquetDuplicateFinder
         public List<int> ColumnIndices { get; set; } = new List<int>();
         public bool Verbose { get; set; }
         public int Limit { get; set; } = -1;
-        public bool ShowStats { get; set; }
-        //public bool StatsOnly { get; set; }
         public bool FindDuplicates { get; set; }
         public bool PrintData { get; set; }
-        public long RowLimit {  get; set; }
+        public long RowLimit { get; set; }
+        public bool IsCsv { get; set; }
+        public char Delimiter { get; set; } = ',';
+        public bool HasHeader { get; set; } = true;
+    }
+
+
+    static class CsvOperations
+    {
+        public static DataTable ReadCsv(string filePath, char delimiter, bool hasHeader)
+        {
+            Console.WriteLine($"Using delimiter: '{delimiter}'");
+
+            var dataTable = new DataTable();
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                Delimiter = delimiter.ToString(),
+                HasHeaderRecord = hasHeader,
+                IgnoreBlankLines = true,
+                TrimOptions = TrimOptions.Trim,
+            };
+
+            using var reader = new StreamReader(filePath);
+            using var csv = new CsvReader(reader, config);
+
+            if (hasHeader)
+            {
+                csv.Read();
+                csv.ReadHeader();
+                foreach (var header in csv.HeaderRecord)
+                {
+                    dataTable.Columns.Add(header);
+                }
+                //Console.WriteLine("CSV Columns: " + string.Join(" | ", csv.HeaderRecord));
+            }
+
+            int rowCount = 0;
+            while (csv.Read())
+            {
+                var row = dataTable.NewRow();
+                for (int i = 0; i < dataTable.Columns.Count; i++)
+                {
+                    row[i] = csv.GetField(i)?.Trim() ?? "NULL";
+                }
+                dataTable.Rows.Add(row);
+
+                // Debug: Print row data
+                //Console.WriteLine("Row " + (rowCount + 1) + ": " + string.Join(" | ", row.ItemArray));
+                rowCount++;
+            }
+
+            Console.WriteLine("Total rows in CSV: " + rowCount);
+
+            return dataTable;
+        }
     }
 
     // Parquet file operations
@@ -375,12 +482,12 @@ namespace ParquetDuplicateFinder
             {
                 Console.Write($"{column.ColumnName,-36} | ");
             }
-            Console.WriteLine();
+            Console.WriteLine(new string('-' ,dataTable.Columns.Count*(36+3)));
 
             long rowNo = 0;
             foreach (DataRow row in dataTable.Rows)
             {
-                if(rowNo < limit)
+                if(limit == -1 || rowNo < limit)
                 {
                     foreach (DataColumn column in dataTable.Columns)
                     {
