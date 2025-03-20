@@ -55,7 +55,7 @@ namespace CSVProcessor
                     case "--delimiter":
                         if (i + 1 < args.Length)
                         {
-                            options.Delimiter = args[i + 1];
+                            options.Delimiter = args[i + 1] =="\\t" ? "\t" : args[i + 1];
                             i++;
                         }
                         break;
@@ -87,7 +87,6 @@ namespace CSVProcessor
                             i++;
                         }
                         break;
-
                     case "-fd":
                     case "--finddup":
                         options.FindDuplicates = true;
@@ -131,7 +130,7 @@ namespace CSVProcessor
         public List<string> Fields { get; set; } = new List<string>();
         public List<int> ColumnIndices { get; set; } = new List<int>();
         public string Delimiter { get; set; } = ",";
-        public bool HasHeader { get; set; }
+        public bool HasHeader { get; set; } = true;
         public bool Verbose { get; set; }
         public int Limit { get; set; } = -1;
         public bool ShowStats { get; set; }
@@ -143,6 +142,7 @@ namespace CSVProcessor
     public class CsvOperations
     {
         private readonly Options _options;
+        private List<string> dupColumnHeadings;
 
         public CsvOperations(Options options)
         {
@@ -170,12 +170,12 @@ namespace CSVProcessor
             var records = ReadCsvData();
             // Determine the columns to use
             var allColumns = ((IDictionary<string, object>)records[0]).Keys.ToList();
-            var columnsToUse = _options.ColumnIndices.Any()
+            List<string> columnsToUse = _options.ColumnIndices.Any()
                 ? _options.ColumnIndices.Select(i => allColumns[i]).ToList() // Use column indices
                 : _options.Fields.Any()
                     ? _options.Fields // Use column names
                     : allColumns; // Use all columns
-
+            dupColumnHeadings = columnsToUse;
             return DuplicateFinder.FindDuplicates(records, columnsToUse);
         }
 
@@ -183,6 +183,9 @@ namespace CSVProcessor
         {
             var records = ReadCsvData();
             List<List<string>> duplicates;
+
+            // Print Default Stats
+            PrintData.PrintInitialStats(records, _options.Fields, _options.ColumnIndices);
 
             if (_options.PrintData)
             {
@@ -192,8 +195,15 @@ namespace CSVProcessor
             if (_options.FindDuplicates)
             {
                 duplicates = FindDuplicates();
-                PrintData.PrintDuplicates(duplicates);
-                PrintData.PrintStatistics(duplicates);
+                if (duplicates.Count > 0)
+                {
+                    PrintData.PrintDuplicates(duplicates, dupColumnHeadings);
+                    PrintData.PrintStatistics(duplicates);
+                }
+                else
+                {
+                    Console.WriteLine("No Duplicates");
+                }
             }
 
             if (_options.ShowStats)
@@ -267,15 +277,18 @@ namespace CSVProcessor
     public static class PrintData
     {
         // Print duplicates
-        public static void PrintDuplicates(List<List<string>> duplicates)
+        public static void PrintDuplicates(List<List<string>> duplicates, List<string> columnsHeading)
         {
             Console.WriteLine("Duplicates found:");
+            Console.WriteLine($"Count|{string.Join("|", columnsHeading)}");
+
             foreach (var group in duplicates)
             {
-                Console.WriteLine("---");
-                foreach (var record in group)
+                if (group.Count > 0)
                 {
-                    Console.WriteLine(record);
+                    // Assuming all records in the group are the same, so we take the first one
+                    var record = group[0];
+                    Console.WriteLine($"{group.Count,5}|{record}");
                 }
             }
         }
@@ -411,6 +424,62 @@ namespace CSVProcessor
             {
                 Console.WriteLine($"{i,5} | {allColumns[i]}");
             }
+
+            /*
+            Console.WriteLine("\nNull/Empty Value Counts:");
+            foreach (var column in allColumns)
+            {
+                Console.WriteLine($"{column}: {nullCounts[column]}");
+            }
+            */
+        }
+
+
+        public static void PrintInitialStats(List<dynamic> records, List<string> columns = null, List<int> columnIndices = null)
+        {
+            if (records == null || records.Count == 0)
+            {
+                Console.WriteLine("No data to generate statistics.");
+                return;
+            }
+
+            // Determine the columns to analyze
+            var allColumns = ((IDictionary<string, object>)records[0]).Keys.ToList();
+
+            // Calculate basic statistics
+            int totalRows = records.Count;
+            int totalColumns = allColumns.Count;
+
+            // Print statistics
+            Console.WriteLine("\nCSV File Statistics:");
+            Console.WriteLine("-------------------");
+            Console.WriteLine($"Total Rows: {totalRows} Total Columns: {totalColumns}");
+            //Console.WriteLine($"Column Names: {string.Join(", ", allColumns)}");
+            // Print column names with index positions in tabular format
+            Console.WriteLine("\nColumn Names:");
+            Console.WriteLine("Index | Column Name");
+            Console.WriteLine("------|------------");
+            for (int i = 0; i < allColumns.Count; i++)
+            {
+                Console.WriteLine($"{i,5} | {allColumns[i]}");
+            }
+
+            //Console.WriteLine($"CSV Column Names: {string.Join(", ", allColumns)}");
+
+            var columnsToUse = columnIndices?.Any() == true
+                ? columnIndices.Select(i => allColumns[i]).ToList() // Use column indices
+                : (columns?.Any() == true ? columns : allColumns); // Use column names or all columns
+
+            //Console.WriteLine($"Selected Column Names: {string.Join(", ", allColumns)}");
+
+            Console.WriteLine("\nSelect CSV Column Names:");
+            Console.WriteLine("Index | Column Name");
+            Console.WriteLine("------|------------");
+            for (int i = 0; i < columnsToUse.Count; i++)
+            {
+                Console.WriteLine($"{i,5} | {columnsToUse[i]}");
+            }
+
 
             /*
             Console.WriteLine("\nNull/Empty Value Counts:");

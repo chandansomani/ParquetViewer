@@ -2,12 +2,11 @@
   "profiles": {
     "CSVProcessor": {
       "commandName": "Project",
-      //"commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf -fd -h -f Department,Location",
-      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf -fd -h"
+      "commandLineArgs": "\"C:\\Users\\csomani\\Desktop\\LR\\Full Load Parquets QA\\ABCOTDsMaterilaity.csv\" -d , -fd -s -c 0,1,2,5"
     },
     "Print 10": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" -d ; -pf 10 -f Department,Location -h"
+      "commandLineArgs": "\"C:\\Users\\csomani\\Desktop\\LR\\Full Load Parquets QA\\ABCOTDsMaterilaity.csv\" -d ; -pf 10 -f Department,Location "
     }
   }
 }
