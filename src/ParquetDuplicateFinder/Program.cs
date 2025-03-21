@@ -221,7 +221,7 @@ namespace ParquetDuplicateFinder
                 }
             }
 
-            // Default to config.json in current directory if not specified
+            // Default to pklist.json in current directory if not specified
             if (!configSpecified && File.Exists(DefaultConfigFile))
             {
                 options.ConfigFilePath = DefaultConfigFile;
