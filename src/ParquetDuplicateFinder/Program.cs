@@ -30,8 +30,8 @@ namespace ParquetDuplicateFinder
                 }
                 else
                 {
-                    var parquetEngine = await ParquetOperations.OpenFileOrFolderAsync(options.FilePath);
-                    var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options.Fields, options.ColumnIndices);
+                    var parquetEngine = await ParquetOperations.OpenFileOrFolderAsync(options);
+                    var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options);
                     dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
                 }
 
@@ -50,10 +50,10 @@ namespace ParquetDuplicateFinder
                 {
                     if (options.Fields.Count == 0)
                     {
-                        Console.WriteLine("No fields specified. Using all columns.");
+                        if(options.Verbose)  Console.WriteLine("No fields specified. Using all columns.");
                         options.Fields = dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
                     }
-                    Console.WriteLine($"Fields used for duplicate check [{options.Fields.Count}]: {string.Join(", ", options.Fields)}");
+                    if (options.Verbose) Console.WriteLine($"Fields used for duplicate check [{options.Fields.Count}]: {string.Join(", ", options.Fields)}");
 
                     DuplicateFinder.FindAndDisplayDuplicates(dataTable, options.Fields, options.Verbose, options.Limit);
                 }
@@ -217,7 +217,7 @@ namespace ParquetDuplicateFinder
             // If Parquet file, show additional statistics
             if (!options.IsCsv)
             {
-                var parquetEngine = ParquetOperations.OpenFileOrFolderAsync(options.FilePath).Result;
+                var parquetEngine = ParquetOperations.OpenFileOrFolderAsync(options).Result;
                 Console.WriteLine("════════ Parquet File Statistics ═══════");
                 Console.WriteLine($"Total Records: {parquetEngine.RecordCount:N0}");
                 Console.WriteLine($"Number of Columns: {parquetEngine.Schema.Fields.Count()}");
@@ -359,19 +359,22 @@ namespace ParquetDuplicateFinder
     // Parquet file operations
     static class ParquetOperations
     {
-        public static async Task<ParquetEngine> OpenFileOrFolderAsync(string filePath)
+        public static async Task<ParquetEngine> OpenFileOrFolderAsync(Options options)
         {
-            Console.WriteLine($"Opening {filePath}...");
-            return await ParquetEngine.OpenFileOrFolderAsync(filePath, CancellationToken.None);
+
+            if(options.Verbose)Console.WriteLine($"Opening {options.FilePath}...");
+            return await ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None);
         }
 
-        public static List<string> GetFieldsToCheck(ParquetEngine parquetEngine, List<string> fields, List<int> columnIndices)
+        public static List<string> GetFieldsToCheck(ParquetEngine parquetEngine, Options options)
         {
+            List<string> fields = options.Fields;
+            List< int > columnIndices = options.ColumnIndices;
             var availableFields = parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
 
             if (fields.Count == 0 && columnIndices.Count == 0)
             {
-                Console.WriteLine("No fields or columns specified, using all available fields for duplicate checking.");
+                if(options.Verbose) Console.WriteLine("No fields or columns specified, using all available fields for duplicate checking.");
                 return availableFields;
             }
 
@@ -420,7 +423,7 @@ namespace ParquetDuplicateFinder
     {
         public static void FindAndDisplayDuplicates(DataTable dataTable, List<string> fieldsToCheck, bool verbose, int limit)
         {
-            Console.WriteLine("Searching for duplicates...");
+            Console.WriteLine($"Searching for duplicates...[{dataTable.Rows.Count}]");
 
             // Group rows by the specified fields
             var duplicateGroups = new Dictionary<string, List<DataRow>>();
