@@ -6,6 +6,7 @@ using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace ParquetDuplicateFinder
 {
@@ -17,20 +18,31 @@ namespace ParquetDuplicateFinder
             {
                 var options = CommandLineParser.Parse(args);
                 if (options == null) return; // Help or invalid arguments
+
+                if (options.PrimaryKeyColumns != null && options.PrimaryKeyColumns.ContainsKey(Path.GetFileName(options.FilePath)))
+                {
+                    var pkColumns = options.PrimaryKeyColumns[Path.GetFileName(options.FilePath)];
+                    Console.WriteLine($"Primary Key Columns for {options.FilePath}: {string.Join(", ", pkColumns)}");
+                }
+                else
+                {
+                    Console.WriteLine("No primary key columns loaded from config.");
+                }
+
                 if (options != null)
                 {
-                    CommandLineParser.PrintCurrentConfiguration(options);
+                    if(options.Verbose || options.ShowStats)CommandLineParser.PrintCurrentConfiguration(options);
                 }
 
                 DataTable dataTable;
 
                 if (options.IsCsv)
                 {
-                    dataTable = CsvOperations.ReadCsv(options.FilePath, options.Delimiter, options.HasHeader, options.Fields, options.ColumnIndices);
+                    dataTable = CsvOperations.ReadCsv(options);
                 }
                 else
                 {
-                    var parquetEngine = await ParquetOperations.OpenFileOrFolderAsync(options);
+                    var parquetEngine = await ParquetOperations.OpenFileAsync(options);
                     var fieldsToCheck = ParquetOperations.GetFieldsToCheck(parquetEngine, options);
                     dataTable = await ParquetOperations.ReadDataAsync(parquetEngine, fieldsToCheck);
                 }
@@ -60,22 +72,24 @@ namespace ParquetDuplicateFinder
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error: {ex.Message}");
-                if (ex is AllFilesSkippedException afse)
                 {
-                    Console.WriteLine($"Details: {afse.Message}");
-                }
-                else if (ex is SomeFilesSkippedException sfse)
-                {
-                    Console.WriteLine($"Details: {sfse.Message}");
-                }
-                else if (ex is FileReadException fre)
-                {
-                    Console.WriteLine($"Details: {fre.Message}");
-                }
-                else if (ex is MultipleSchemasFoundException msfe)
-                {
-                    Console.WriteLine($"Details: {msfe.Message}");
+                    Console.WriteLine($"Error: {ex.Message}");
+                    if (ex is AllFilesSkippedException afse)
+                    {
+                        Console.WriteLine($"Details: {afse.Message}");
+                    }
+                    else if (ex is SomeFilesSkippedException sfse)
+                    {
+                        Console.WriteLine($"Details: {sfse.Message}");
+                    }
+                    else if (ex is FileReadException fre)
+                    {
+                        Console.WriteLine($"Details: {fre.Message}");
+                    }
+                    else if (ex is MultipleSchemasFoundException msfe)
+                    {
+                        Console.WriteLine($"Details: {msfe.Message}");
+                    }
                 }
             }
         }
@@ -84,6 +98,7 @@ namespace ParquetDuplicateFinder
     // Command-line argument parsing
     static class CommandLineParser
     {
+        private const string DefaultConfigFile = "pklist.json";
         public static Options Parse(string[] args)
         {
             if (args.Length < 1)
@@ -107,14 +122,25 @@ namespace ParquetDuplicateFinder
                 "-pf", "--printData",
                 "-s", "--stats",
                 "-h", "--help"
+                ,"--config"
             };
+
+            bool configSpecified = false;
 
             for (int i = 1; i < args.Length; i++)
             {
                 string arg = args[i];
 
-                switch (args[i])
+                switch (arg)
                 {
+                    case "--config":
+                        if (i + 1 < args.Length)
+                        {
+                            options.ConfigFilePath = args[i + 1];
+                            configSpecified = true;
+                            i++;
+                        }                        
+                        break;
                     case "--csv":
                         options.IsCsv = true;
                         break;
@@ -195,6 +221,28 @@ namespace ParquetDuplicateFinder
                 }
             }
 
+            // Default to config.json in current directory if not specified
+            if (!configSpecified && File.Exists(DefaultConfigFile))
+            {
+                options.ConfigFilePath = DefaultConfigFile;
+            }
+
+            // Load PK columns from config only if neither -f nor -c is specified
+            if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
+            {
+                options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, options.FilePath);
+            }
+
+            // Warnings for conflicts
+            if (options.Fields != null && (options.ConfigFilePath != null || options.ColumnIndices != null))
+            {
+                Console.WriteLine("Warning: '--fields' specified; ignoring '--config' and '--columns' for column selection.");
+            }
+            else if (options.ColumnIndices != null && options.ConfigFilePath != null)
+            {
+                Console.WriteLine("Warning: '--columns' specified; ignoring '--config' for column selection.");
+            }
+
             return options;
         }
 
@@ -217,7 +265,7 @@ namespace ParquetDuplicateFinder
             // If Parquet file, show additional statistics
             if (!options.IsCsv)
             {
-                var parquetEngine = ParquetOperations.OpenFileOrFolderAsync(options).Result;
+                var parquetEngine = ParquetOperations.OpenFileAsync(options).Result;
                 Console.WriteLine("════════ Parquet File Statistics ═══════");
                 Console.WriteLine($"Total Records: {parquetEngine.RecordCount:N0}");
                 Console.WriteLine($"Number of Columns: {parquetEngine.Schema.Fields.Count()}");
@@ -244,12 +292,63 @@ namespace ParquetDuplicateFinder
             Console.WriteLine("════════════════════════════════════════");
         }
 
+        private static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
+        {
+            try
+            {
+                string jsonContent = File.ReadAllText(configFilePath);
+
+                // Use the source-generated context
+                var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+
+                var pkColumns = new Dictionary<string, List<string>>();
+                string fileName = Path.GetFileName(targetFilePath);
+
+                if (config.ParquetFiles.ContainsKey(fileName))
+                {
+                    pkColumns[fileName] = config.ParquetFiles[fileName].Columns
+                        .Where(c => c.IsPrimaryKey)
+                        .Select(c => c.Name)
+                        .ToList();
+                }
+                else if (config.ParquetFiles.ContainsKey("*.parquet"))
+                {
+                    pkColumns[fileName] = config.ParquetFiles["*.parquet"].Columns
+                        .Where(c => c.IsPrimaryKey)
+                        .Select(c => c.Name)
+                        .ToList();
+                }
+                else
+                {
+                    Console.WriteLine($"No config entry found for '{fileName}'.");
+                }
+
+                return pkColumns;
+            }
+            catch (FileNotFoundException)
+            {
+                Console.WriteLine($"Config file not found: {configFilePath}");
+                return null;
+            }
+            catch (JsonException ex)
+            {
+                Console.WriteLine($"Error parsing config file '{configFilePath}': {ex.Message}");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Unexpected error loading config file '{configFilePath}': {ex.Message}");
+                return null;
+            }
+        }
+
         private static void PrintUsage()
         {
             Console.WriteLine("ParquetDuplicateFinder - Find duplicate records in Parquet or CSV files");
             Console.WriteLine("\nUsage:");
             Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
             Console.WriteLine("\nOptions:");
+            Console.WriteLine("  --config <path>                   Path to JSON config file with PK columns");
             Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
             Console.WriteLine("  --delimiter <char>                Specify CSV delimiter (default: ',')");
             Console.WriteLine("  --header                          Treat first row as CSV header");
@@ -265,7 +364,7 @@ namespace ParquetDuplicateFinder
     }
 
     // Options class to hold command-line arguments
-    class Options
+    public class Options
     {
         public string FilePath { get; set; }
         public List<string> Fields { get; set; } = new List<string>();
@@ -274,19 +373,27 @@ namespace ParquetDuplicateFinder
         public int Limit { get; set; } = -1;
         public bool FindDuplicates { get; set; }
         public bool PrintData { get; set; }
-        public long RowLimit { get; set; }
+        public long RowLimit { get; set; } = -1;
         public bool IsCsv { get; set; }
         public char Delimiter { get; set; } = ',';
         public bool HasHeader { get; set; } = true;
         public bool ShowStats { get; set; }
+        public string ConfigFilePath { get; set; }
+        public Dictionary<string, List<string>> PrimaryKeyColumns { get; set; } // Maps file name to its PK columns
     }
 
 
     static class CsvOperations
     {
-        public static DataTable ReadCsv(string filePath, char delimiter, bool hasHeader, List<string> selectedFields, List<int> selectedIndices)
+        public static DataTable ReadCsv(Options options)
         {
-            Console.WriteLine($"Using delimiter: '{delimiter}'");
+            string filePath = options.FilePath;
+            char delimiter = options.Delimiter;
+            bool hasHeader = options.HasHeader;
+            List<string> selectedFields = options.Fields;
+            List<int> selectedIndices = options.ColumnIndices;
+                        
+            if(options.Verbose) Console.WriteLine($"Using delimiter: '{delimiter}'");
 
             var dataTable = new DataTable();
             var config = new CsvConfiguration(CultureInfo.InvariantCulture)
@@ -337,7 +444,7 @@ namespace ParquetDuplicateFinder
                     dataTable.Columns.Add(headers[index]);
                 }
 
-                Console.WriteLine($"Selected CSV Columns: {string.Join(", ", columnIndicesToLoad.Select(i => headers[i]))}");
+                if (options.Verbose) Console.WriteLine($"Selected CSV Columns: {string.Join(", ", columnIndicesToLoad.Select(i => headers[i]))}");
             }
 
             // Read rows
@@ -359,7 +466,7 @@ namespace ParquetDuplicateFinder
     // Parquet file operations
     static class ParquetOperations
     {
-        public static async Task<ParquetEngine> OpenFileOrFolderAsync(Options options)
+        public static async Task<ParquetEngine> OpenFileAsync(Options options)
         {
 
             if(options.Verbose)Console.WriteLine($"Opening {options.FilePath}...");
@@ -513,7 +620,6 @@ namespace ParquetDuplicateFinder
 
     static class PrintData
     {
-
         public static void DisplayColumnsData(DataTable dataTable, List<int> selectedColumnIndices)
         {
             Console.WriteLine("═════ COLUMN DETAILS ═════");
@@ -650,5 +756,22 @@ namespace ParquetDuplicateFinder
 
             return $"{number:n2} {suffixes[counter]}";
         }
+    }
+
+
+    public class ColumnConfig
+    {
+        public string Name { get; set; }
+        public bool IsPrimaryKey { get; set; }
+    }
+
+    public class ParquetFileConfig
+    {
+        public List<ColumnConfig> Columns { get; set; }
+    }
+
+    public class ConfigFile
+    {
+        public Dictionary<string, ParquetFileConfig> ParquetFiles { get; set; }
     }
 }

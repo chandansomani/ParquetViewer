@@ -1,0 +1,92 @@
+{
+  "ParquetFiles": {
+    "sales_data.parquet": {
+      "Columns": [
+        {
+          "Name": "OrderId",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "OrderDate",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "CustomerName",
+          "IsPrimaryKey": false
+        },
+        {
+          "Name": "Amount",
+          "IsPrimaryKey": false
+        }
+      ]
+    },
+    "inventory_data.parquet": {
+      "Columns": [
+        {
+          "Name": "ProductId",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "WarehouseId",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "StockLevel",
+          "IsPrimaryKey": false
+        }
+      ]
+    },
+    "customer_data.parquet": {
+      "Columns": [
+        {
+          "Name": "CustomerId",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "Email",
+          "IsPrimaryKey": false
+        },
+        {
+          "Name": "JoinDate",
+          "IsPrimaryKey": false
+        }
+      ]
+    },
+    "email-password-recovery-code.csv": {
+      "Columns": [
+        {
+          "IsPrimaryKey": true,
+          "Name": "Login email"
+        },
+        {
+          "IsPrimaryKey": true,
+          "Name": "Identifier"
+        },
+        {
+          "IsPrimaryKey": false,
+          "Name": "One-time password"
+        },
+        {
+          "Name": "Recovery code",
+          "IsPrimaryKey": false
+        },
+        {
+          "Name": "First name",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "Last name",
+          "IsPrimaryKey": true
+        },
+        {
+          "Name": "Department",
+          "IsPrimaryKey": false
+        },
+        {
+          "Name": "Location",
+          "IsPrimaryKey": false
+        }
+      ]
+    }
+  }
+}

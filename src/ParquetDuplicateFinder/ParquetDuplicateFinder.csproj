@@ -8,12 +8,14 @@
 	  <RuntimeIdentifier>win-x64</RuntimeIdentifier>
 	  <PublishTrimmed>true</PublishTrimmed>
 	  <PublishReadyToRun>true</PublishReadyToRun>
+	  
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="CsvHelper" />
+    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +25,9 @@
 		<None Update="appsettings.json">
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</None>
+		<None Update="config.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
 </Project>
