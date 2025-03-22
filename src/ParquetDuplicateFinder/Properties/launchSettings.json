@@ -3,6 +3,14 @@
     "ParquetDuplicateFinder": {
       "commandName": "Project",
       "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" --delimiter ; --printData --csv --header -d"
+    },
+    "ParquetDuplicateFinderCSV": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" --delimiter ; --printData --csv --header -d"
+    },
+    "ParquetDuplicateFinderParquet": {
+      "commandName": "Project",
+      "commandLineArgs": "userdata.parquet -pf 10"
     }
   }
 }
