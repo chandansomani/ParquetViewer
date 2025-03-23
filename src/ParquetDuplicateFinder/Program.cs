@@ -491,20 +491,32 @@ static class ParquetOperations
         var parquetEngine = await ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None);
         var availableFields = parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
 
-        var validFields = columnsToUse
-            .Where(f => availableFields.Contains(f, StringComparer.OrdinalIgnoreCase))
-            .ToList();
-        var invalidFields = columnsToUse.Except(validFields, StringComparer.OrdinalIgnoreCase).ToList();
+        List<string> fieldsToLoad;
 
-        if (invalidFields.Any())
+        if (columnsToUse == null || columnsToUse.Count == 0)
         {
-            Console.WriteLine($"Warning: These fields do not exist in the Parquet file: {string.Join(", ", invalidFields)}");
+            // If no columns specified, load all available fields
+            fieldsToLoad = availableFields;
+            if (options.Verbose) Console.WriteLine("No columns specified; loading all available fields.");
+        }
+        else
+        {
+            // Filter specified columns against available fields
+            fieldsToLoad = columnsToUse
+                .Where(f => availableFields.Contains(f, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            var invalidFields = columnsToUse.Except(fieldsToLoad, StringComparer.OrdinalIgnoreCase).ToList();
+
+            if (invalidFields.Any())
+            {
+                Console.WriteLine($"Warning: These fields do not exist in the Parquet file: {string.Join(", ", invalidFields)}");
+            }
         }
 
-        if (options.Verbose) Console.WriteLine($"Loading Parquet fields: {string.Join(", ", validFields)}");
+        if (options.Verbose) Console.WriteLine($"Loading Parquet fields: {string.Join(", ", fieldsToLoad)}");
 
         var loadResult = await parquetEngine.ReadRowsAsync(
-            validFields,
+            fieldsToLoad,
             0,
             (int)parquetEngine.RecordCount,
             CancellationToken.None,
@@ -525,39 +537,75 @@ static class DataProcessor
     {
         if (verbose) Console.WriteLine("Printing data...");
 
-        Console.WriteLine(string.Join(" | ", dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName.PadRight(36))));
-        Console.WriteLine(new string('─', dataTable.Columns.Count * 37 - 1));
+        // Set an upper bound for column widths
+        const int MAX_COLUMN_WIDTH = 40;
+        const int SAMPLE_SIZE = 100; // Sample first 100 rows
 
+        // Calculate column widths based on header and sampled data
+        int[] columnWidths = new int[dataTable.Columns.Count];
+        for (int i = 0; i < dataTable.Columns.Count; i++)
+        {
+            string header = dataTable.Columns[i].ColumnName;
+            int sampleWidth = dataTable.Rows.Cast<DataRow>()
+                .Take(Math.Min(SAMPLE_SIZE, dataTable.Rows.Count)) // Sample up to 100 rows
+                .Select(r => (r[i]?.ToString() ?? "NULL").Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            columnWidths[i] = Math.Min(Math.Max(header.Length, sampleWidth), MAX_COLUMN_WIDTH);
+        }
+
+        // Print header
+        Console.WriteLine(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
+            .Select((c, i) => c.ColumnName.PadRight(columnWidths[i]))));
+        Console.WriteLine(new string('─', columnWidths.Sum() + (dataTable.Columns.Count - 1) * 3));
+
+        // Print rows
         long rowCount = 0;
         foreach (DataRow row in dataTable.Rows)
         {
             if (rowLimit == -1 || rowCount < rowLimit)
             {
                 Console.WriteLine(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
-                    .Select(c => (row[c]?.ToString() ?? "NULL").PadRight(36)[..Math.Min(36, (row[c]?.ToString() ?? "").Length)])));
+                    .Select((c, i) =>
+                    {
+                        string value = row[c]?.ToString() ?? "NULL";
+                        return value.Length > columnWidths[i]
+                            ? value[..columnWidths[i]] // Truncate to column width
+                            : value.PadRight(columnWidths[i]); // Pad to column width
+                    })));
                 rowCount++;
             }
             else break;
         }
+
+        if (verbose) Console.WriteLine($"Printed {rowCount} rows.");
     }
 
     public static void FindDuplicates(DataTable dataTable, List<string> columnsToUse, bool verbose, int limit)
     {
         if (verbose) Console.WriteLine($"Finding duplicates using columns: {string.Join(", ", columnsToUse)}");
 
-        var duplicateGroups = new Dictionary<string, List<DataRow>>();
+        // Store duplicate groups with row positions
+        var duplicateGroups = new Dictionary<string, List<(DataRow Row, int Position)>>();
+        int rowPosition = 0;
         Parallel.ForEach(dataTable.AsEnumerable(), row =>
         {
             var key = CreateKey(row, columnsToUse);
             lock (duplicateGroups)
             {
                 if (!duplicateGroups.ContainsKey(key))
-                    duplicateGroups[key] = new List<DataRow>();
-                duplicateGroups[key].Add(row);
+                    duplicateGroups[key] = new List<(DataRow, int)>();
+                duplicateGroups[key].Add((row, rowPosition));
             }
+            Interlocked.Increment(ref rowPosition); // Thread-safe position increment
         });
 
-        var duplicates = duplicateGroups.Where(g => g.Value.Count > 1).ToList();
+        // Filter to only duplicate groups (count > 1)
+        var duplicates = duplicateGroups
+            .Where(g => g.Value.Count > 1)
+            .OrderByDescending(g => g.Value.Count) // Sort by group size
+            .ToList();
+
         if (duplicates.Count == 0)
         {
             Console.WriteLine("No duplicates found.");
@@ -565,26 +613,20 @@ static class DataProcessor
         }
 
         Console.WriteLine($"Found {duplicates.Count} duplicate groups.");
+
+        // Display limited number of groups
         int displayLimit = limit > 0 ? Math.Min(limit, duplicates.Count) : duplicates.Count;
+        Console.WriteLine("═════ Duplicate Summary ═════");
+        Console.WriteLine($"{"Group #",-8} | {"Count",-6} | {"Row #",-12} | Record");
+        Console.WriteLine(new string('─', 8 + 3 + 6 + 3 + 12 + 3 + columnsToUse.Count * 20)); // Rough estimate for width
+
         for (int i = 0; i < displayLimit; i++)
         {
             var group = duplicates[i];
-            Console.WriteLine($"\nDuplicate Group #{i + 1} - {group.Value.Count} records");
-            if (verbose)
-            {
-                Console.WriteLine("Row# | " + string.Join(" | ", dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName.PadRight(36))));
-                int rowNum = 1;
-                foreach (var row in group.Value)
-                {
-                    Console.WriteLine($"{rowNum++,4} | " + string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
-                        .Select(c => (row[c]?.ToString() ?? "NULL").PadRight(36)[..Math.Min(36, (row[c]?.ToString() ?? "").Length)])));
-                }
-            }
-            else
-            {
-                Console.WriteLine(string.Join(" | ", columnsToUse));
-                Console.WriteLine(string.Join(" | ", columnsToUse.Select(f => (group.Value[0][f]?.ToString() ?? "NULL").PadRight(36)[..Math.Min(36, (group.Value[0][f]?.ToString() ?? "").Length)])));
-            }
+            var sample = group.Value[0]; // First record as sample
+            var sampleValues = string.Join(" | ", columnsToUse
+                .Select(c => (sample.Row[c]?.ToString() ?? "NULL").PadRight(20)[..Math.Min(20, (sample.Row[c]?.ToString() ?? "").Length)]));
+            Console.WriteLine($"{i + 1,-8} | {group.Value.Count,-6} | {sample.Position,-12} | {sampleValues}");
         }
 
         int totalDuplicates = duplicates.Sum(g => g.Value.Count - 1);
