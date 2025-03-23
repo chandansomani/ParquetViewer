@@ -8,6 +8,7 @@ using System.Text.Json;
 using ParquetViewer.Engine;
 using System.Text;
 using System.Security.Cryptography;
+using System.IO.Compression;
 
 namespace ParquetDuplicateFinder;
 
@@ -24,7 +25,17 @@ class Program
 
             if (options.IsCsv)
             {
-                using var reader = new StreamReader(options.FilePath);
+                //using var reader = new StreamReader(options.FilePath);
+                using var fileStream = new FileStream(options.FilePath, FileMode.Open, FileAccess.Read);
+                Stream stream = fileStream;
+
+                // Check if the file is gzipped (based on file extension)
+                if (options.FilePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+                {
+                    stream = new GZipStream(fileStream, CompressionMode.Decompress);
+                }
+
+                using var reader = new StreamReader(stream);
                 using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = options.Delimiter.ToString(), HasHeaderRecord = options.HasHeader });
                 if (csv.Read() && options.HasHeader)
                 {
@@ -426,7 +437,17 @@ static class CsvOperations
             TrimOptions = TrimOptions.Trim,
         };
 
-        using var reader = new StreamReader(filePath);
+        //using var reader = new StreamReader(filePath);
+        using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+        Stream stream = fileStream;
+
+        // Check if the file is gzipped (based on file extension)
+        if (filePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+        {
+            stream = new GZipStream(fileStream, CompressionMode.Decompress);
+        }
+
+        using var reader = new StreamReader(stream);
         using var csv = new CsvReader(reader, config);
 
         if (!csv.Read()) return dataTable; // No data
