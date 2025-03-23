@@ -21,6 +21,12 @@ class Program
             var options = CommandLineParser.Parse(args);
             if (options == null) return;
 
+            if (options.ReconfigColumns)
+            {
+                ConfigManager.ReconfigColumnsFromFile(options);
+                return; // Exit after updating config
+            }
+
             List<string> columnsToUse;
 
             if (options.IsCsv)
@@ -122,6 +128,7 @@ static class CommandLineParser
             "-s", "--stats",
             "-h", "--help"
             ,"--config"
+            ,"--reconfigColumns"
         };
 
         bool configSpecified = false;
@@ -208,6 +215,9 @@ static class CommandLineParser
                 case "--help":
                     PrintUsage();
                     return null;
+                case "--reconfigColumns":
+                    options.ReconfigColumns = true;
+                    break;
                 default:
                     if (!validArgs.Contains(arg))
                     {
@@ -297,6 +307,7 @@ static class CommandLineParser
         Console.WriteLine("  -d, --findDuplicates              Find and display duplicates");
         Console.WriteLine("  -pf, --printData                  Print file data");
         Console.WriteLine("  -s, --stats                       Show column statistics");
+        Console.WriteLine("  --reconfigColumns                 Update pklist.json with file columns");
         Console.WriteLine("  -h, --help                        Show this help message");
     }
 }
@@ -317,6 +328,7 @@ public class Options
     public bool ShowStats { get; set; }
     public string ConfigFilePath { get; set; }
     public Dictionary<string, List<string>> PrimaryKeyColumns { get; set; }
+    public bool ReconfigColumns { get; set; } // New option
 }
 
 public class ColumnConfig
@@ -335,7 +347,7 @@ public class ConfigFile
     public Dictionary<string, ParquetFileConfig> ParquetFiles { get; set; }
 }
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true)]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = true)]
 [JsonSerializable(typeof(ConfigFile))]
 [JsonSerializable(typeof(ParquetFileConfig))]
 [JsonSerializable(typeof(ColumnConfig))]
@@ -394,6 +406,8 @@ static class ColumnSelector
         else if (options.PrimaryKeyColumns != null && options.PrimaryKeyColumns.ContainsKey(fileName))
         {
             columnsToUse = options.PrimaryKeyColumns[fileName];
+            if(columnsToUse.Count == 0)
+                Console.WriteLine($"Using primary key columns from config, but no columns marked as primarykey");
             if (options.Verbose) Console.WriteLine($"Using primary key columns from config: {string.Join(", ", columnsToUse)}");
         }
         // Priority 4: All columns
@@ -729,5 +743,134 @@ static class FileInfoProvider
             counter++;
         }
         return $"{number:n2} {suffixes[counter]}";
+    }
+}
+
+
+
+
+
+static class ConfigManager
+{
+    private const string DefaultConfigFile = "pklist.json";
+
+    public static void ReconfigColumnsFromFile(Options options)
+    {
+        if (string.IsNullOrEmpty(options.FilePath))
+        {
+            throw new ArgumentException("File path must be provided.");
+        }
+
+        string configFilePath = DefaultConfigFile;
+        string fileName = Path.GetFileName(options.FilePath);
+
+        if (options.Verbose) Console.WriteLine($"Reading columns from '{options.FilePath}' to update '{configFilePath}'...");
+
+        // Get columns from the file
+        List<string> columns = options.IsCsv
+            ? GetCsvColumns(options)
+            : GetParquetColumns(options).Result;
+
+        if (columns == null || !columns.Any())
+        {
+            Console.WriteLine($"No columns found in '{options.FilePath}'. Config not updated.");
+            return;
+        }
+
+        // Load existing config or create new
+        ConfigFile config;
+        if (File.Exists(configFilePath))
+        {
+            string jsonContent = File.ReadAllText(configFilePath);
+            config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile) ?? new ConfigFile();
+            if (config.ParquetFiles == null)
+            {
+                config.ParquetFiles = new Dictionary<string, ParquetFileConfig>();
+            }
+        }
+        else
+        {
+            config = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
+        }
+
+        // Get or create entry for the file
+        if (!config.ParquetFiles.ContainsKey(fileName))
+        {
+            config.ParquetFiles[fileName] = new ParquetFileConfig { Columns = new List<ColumnConfig>() };
+        }
+
+        var existingColumns = config.ParquetFiles[fileName].Columns ?? new List<ColumnConfig>();
+        var existingNames = existingColumns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Add new columns if not already present
+        foreach (var column in columns)
+        {
+            if (!existingNames.Contains(column))
+            {
+                existingColumns.Add(new ColumnConfig { Name = column, IsPrimaryKey = false });
+                if (options.Verbose) Console.WriteLine($"Added column '{column}' for '{fileName}' with IsPrimaryKey = false.");
+            }
+            else if (options.Verbose)
+            {
+                Console.WriteLine($"Column '{column}' already exists for '{fileName}'; skipping.");
+            }
+        }
+
+        config.ParquetFiles[fileName].Columns = existingColumns;
+
+        // Save updated config
+        string updatedJson = JsonSerializer.Serialize(config, ConfigJsonContext.Default.ConfigFile);
+        File.WriteAllText(configFilePath, updatedJson);
+
+        if (options.Verbose) Console.WriteLine($"Updated '{configFilePath}' with {columns.Count} columns from '{fileName}'.");
+    }
+
+    private static List<string> GetCsvColumns(Options options)
+    {
+        try
+        {
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                Delimiter = options.Delimiter.ToString(),
+                HasHeaderRecord = options.HasHeader,
+                IgnoreBlankLines = true,
+                TrimOptions = TrimOptions.Trim,
+            };
+
+            using var reader = new StreamReader(options.FilePath);
+            using var csv = new CsvReader(reader, config);
+
+            if (!csv.Read()) return new List<string>();
+
+            if (options.HasHeader)
+            {
+                csv.ReadHeader();
+                return csv.HeaderRecord.ToList();
+            }
+            else
+            {
+                int fieldCount = csv.Context.Parser.Count;
+                return Enumerable.Range(0, fieldCount).Select(i => $"Column_{i}").ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading CSV columns from '{options.FilePath}': {ex.Message}");
+            return null;
+        }
+    }
+
+    private static async Task<List<string>> GetParquetColumns(Options options)
+    {
+        try
+        {
+            var parquetEngine = await ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None);
+            return parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading Parquet columns from '{options.FilePath}': {ex.Message}");
+            return null;
+        }
     }
 }

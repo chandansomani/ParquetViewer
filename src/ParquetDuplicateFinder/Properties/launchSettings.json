@@ -11,6 +11,10 @@
     "ParquetDuplicateFinderParquet": {
       "commandName": "Project",
       "commandLineArgs": "userdata.parquet -pf 10"
+    },
+    "reconfigColsCSV": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" --delimiter ; --printData --csv --header -d --reconfigColumns -v"
     }
   }
 }
