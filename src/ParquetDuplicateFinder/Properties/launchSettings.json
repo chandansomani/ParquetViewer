@@ -15,6 +15,10 @@
     "reconfigColsCSV": {
       "commandName": "Project",
       "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" --delimiter ; --printData --csv --header -d --reconfigColumns -v"
+    },
+    "Folder": {
+      "commandName": "Project",
+      "commandLineArgs": ". --folder -pf 10 --delimiter ;"
     }
   }
 }

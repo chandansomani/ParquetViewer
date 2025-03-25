@@ -12,17 +12,17 @@ using System.IO.Compression;
 
 namespace ParquetDuplicateFinder;
 
-class Program
+partial class Program
 {
     private static string logFilePath;
     static async Task Main(string[] args)
     {
         try
         {
+            InitializeLogging(new());
             var options = CommandLineParser.Parse(args);
             if (options == null) return;
 
-            InitializeLogging(options);
 
             if (options.ReconfigColumns)
             {
@@ -88,7 +88,11 @@ class Program
             else if (ex is FileReadException fre) Log($"Details: {fre.Message}");
             else if (ex is MultipleSchemasFoundException msfe) Log($"Details: {msfe.Message}");
         }
-    }
+    }    
+}
+
+partial class Program
+{
     private static async Task<List<string>> GetColumnsToUse(Options options)
     {
         if (options.IsCsv)
@@ -102,7 +106,7 @@ class Program
             }
 
             using var reader = new StreamReader(stream);
-            using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = ",", HasHeaderRecord = true });
+            using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = options.Delimiter.ToString(), HasHeaderRecord = options.HasHeader });
             if (csv.Read() && options.HasHeader)
             {
                 csv.ReadHeader();
@@ -117,7 +121,6 @@ class Program
             return ColumnSelector.GetColumnsToUse(options, null, availableFields);
         }
     }
-    
 
     private static void InitializeLogging(Options options)
     {
@@ -127,7 +130,7 @@ class Program
         Log("Starting ParquetDuplicateFinder run...");
     }
 
-    private static void Log(string message)
+    public static void Log(string message)
     {
         //Console.WriteLine(message);
         File.AppendAllText(logFilePath, $"{DateTime.Now}: {message}\n");
@@ -267,94 +270,111 @@ class Program
         int totalDuplicates = duplicates.Sum(g => g.Value.Count - 1);
         Log($"\nSummary: Found {totalDuplicates} duplicate records in {duplicates.Count} groups.");
     }
+
 }
 static class CommandLineParser
 {
     private const string DefaultConfigFile = "pklist.json";
+    private static readonly HashSet<string> ValidArgs = new HashSet<string>
+    {
+        "--folder",
+        "--csv",
+        "--delimiter",
+        "--header",
+        "-f", "--fields",
+        "-c", "--columns",
+        "-v", "--verbose",
+        "-l", "--limit",
+        "-d", "--findDuplicates",
+        "-pf", "--printData",
+        "-s", "--stats",
+        "-h", "--help"
+        ,"--config"
+        ,"--reconfigColumns"
+    };
 
     public static Options Parse(string[] args)
     {
         if (args.Length < 1)
         {
-            PrintUsage();
+            UserFeedback.PrintUsage();
             return null;
         }
 
+        var options = ParseArguments(args);
+        if (options == null) return null;
+
+        if (options.ReconfigColumns) return options;
+
+        if (!ValidateOptions(options))
+            return null;
+
+        // Config loading moved to UpdateOptionsForFile for individual files
+        WarnAboutConflicts(options);
+
+        return options;
+    }
+
+    private static Options ParseArguments(string[] args)
+    {
+        var initialPath = args[0].Equals(".") ? Directory.GetCurrentDirectory() : args[0];
         var options = new Options();
-        var validArgs = new HashSet<string>
+
+        // Check if initial path is a directory and set mode accordingly
+        if (Directory.Exists(initialPath))
         {
-            "--folder",
-            "--csv",
-            "--delimiter",
-            "--header",
-            "-f", "--fields",
-            "-c", "--columns",
-            "-v", "--verbose",
-            "-l", "--limit",
-            "-d", "--findDuplicates",
-            "-pf", "--printData",
-            "-s", "--stats",
-            "-h", "--help"
-            ,"--config"
-            ,"--reconfigColumns"
-        };
+            options.IsFolderMode = true;
+            options.FolderPath = initialPath;
+        }
+        else
+        {
+            options.FilePath = initialPath;
+        }
 
         bool configSpecified = false;
-        options.FilePath = args[0]; // First arg is file or folder path
 
         for (int i = 1; i < args.Length; i++)
         {
             string arg = args[i];
+            if (!ValidArgs.Contains(arg))
+            {
+                UserFeedback.PrintInvalidArgumentError(arg);
+                return null;
+            }
+
             switch (arg)
             {
                 case "--folder":
                     options.IsFolderMode = true;
-                    options.FolderPath = options.FilePath; // Use first arg as folder path
-                    if (!Directory.Exists(options.FolderPath))
-                    {
-                        Console.WriteLine($"Error: Folder '{options.FolderPath}' does not exist.");
-                        return null;
-                    }
+                    options.FolderPath = options.FilePath ?? initialPath;
                     break;
                 case "--config":
                     if (i + 1 < args.Length)
                     {
-                        options.ConfigFilePath = args[i + 1];
+                        options.ConfigFilePath = args[++i];
                         configSpecified = true;
-                        i++;
                     }
                     break;
                 case "--csv":
                     options.IsCsv = true;
                     break;
                 case "--delimiter":
-                    if (i + 1 < args.Length)
-                    {
-                        options.Delimiter = args[i + 1][0];
-                        i++;
-                    }
+                    if (i + 1 < args.Length) options.Delimiter = args[++i][0];
                     break;
                 case "--header":
                     options.HasHeader = true;
                     break;
                 case "-f":
                 case "--fields":
-                    if (i + 1 < args.Length)
-                    {
-                        options.Fields = args[i + 1].Split(',').Select(f => f.Trim()).ToList();
-                        i++;
-                    }
+                    if (i + 1 < args.Length) options.Fields = args[++i].Split(',').Select(f => f.Trim()).ToList();
                     break;
                 case "-c":
                 case "--columns":
                     if (i + 1 < args.Length)
-                    {
-                        options.ColumnIndices = args[i + 1].Split(',')
+                        options.ColumnIndices = args[++i].Split(',')
                             .Where(n => int.TryParse(n, out _))
                             .Select(int.Parse)
                             .ToList();
-                        i++;
-                    }
                     break;
                 case "-v":
                 case "--verbose":
@@ -362,11 +382,7 @@ static class CommandLineParser
                     break;
                 case "-l":
                 case "--limit":
-                    if (i + 1 < args.Length && int.TryParse(args[i + 1], out int limit))
-                    {
-                        options.Limit = limit;
-                        i++;
-                    }
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out int limit)) options.Limit = limit;
                     break;
                 case "-d":
                 case "--findDuplicates":
@@ -375,15 +391,8 @@ static class CommandLineParser
                 case "-pf":
                 case "--printData":
                     options.PrintData = true;
-                    if (i + 1 < args.Length && long.TryParse(args[i + 1], out long rowLimit))
-                    {
-                        options.RowLimit = rowLimit;
-                        i++;
-                    }
-                    else
-                    {
-                        options.RowLimit = -1;
-                    }
+                    if (i + 1 < args.Length && long.TryParse(args[++i], out long rowLimit)) options.RowLimit = rowLimit;
+                    else options.RowLimit = -1;
                     break;
                 case "-s":
                 case "--stats":
@@ -391,123 +400,147 @@ static class CommandLineParser
                     break;
                 case "-h":
                 case "--help":
-                    PrintUsage();
+                    UserFeedback.PrintUsage();
                     return null;
                 case "--reconfigColumns":
                     options.ReconfigColumns = true;
                     break;
-                default:
-                    if (!validArgs.Contains(arg))
-                    {
-                        Console.WriteLine($"Invalid argument: {arg}");
-                        PrintUsage();
-                        return null;
-                    }
-                    break;
             }
         }
 
-        if (!options.IsFolderMode && !File.Exists(options.FilePath))
-        {
-            Console.WriteLine($"Error: File '{options.FilePath}' does not exist.");
-            return null;
-        }
-
         if (!configSpecified && File.Exists(DefaultConfigFile))
-        {
             options.ConfigFilePath = DefaultConfigFile;
-        }
-
-        if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
-        {
-            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, options.FilePath);
-        }
-
-        if (options.Fields != null && (options.ColumnIndices != null || options.ConfigFilePath != null))
-        {
-            Console.WriteLine("Warning: '--fields' specified; ignoring '--config' and '--columns'.");
-        }
-        else if (options.ColumnIndices != null && options.ConfigFilePath != null)
-        {
-            Console.WriteLine("Warning: '--columns' specified; ignoring '--config'.");
-        }
 
         return options;
     }
 
-    private static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
+    private static bool ValidateOptions(Options options)
     {
-        try
+        if (options.IsFolderMode)
         {
-            string jsonContent = File.ReadAllText(configFilePath);
-            var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
-
-            if (config == null || config.ParquetFiles == null)
+            if (!Directory.Exists(options.FolderPath))
             {
-                Console.WriteLine($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
+                UserFeedback.PrintError($"Folder '{options.FolderPath}' does not exist.");
+                return false;
+            }
+        }
+        else if (!File.Exists(options.FilePath))
+        {
+            UserFeedback.PrintError($"File '{options.FilePath}' does not exist.");
+            return false;
+        }
+        return true;
+    }
+
+    private static void WarnAboutConflicts(Options options)
+    {
+        if (options.Fields != null && (options.ColumnIndices != null || options.ConfigFilePath != null))
+            UserFeedback.PrintWarning("'--fields' specified; ignoring '--config' and '--columns'.");
+        else if (options.ColumnIndices != null && options.ConfigFilePath != null)
+            UserFeedback.PrintWarning("'--columns' specified; ignoring '--config'.");
+    }
+
+    private static class ConfigLoader
+    {
+        public static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
+        {
+            try
+            {
+                string jsonContent = File.ReadAllText(configFilePath);
+                var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+
+                if (config == null || config.ParquetFiles == null)
+                {
+                    Program.Log($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
+                    return null;
+                }
+
+                var pkColumns = new Dictionary<string, List<string>>();
+                string fileName = Path.GetFileName(targetFilePath);
+
+                if (config.ParquetFiles.ContainsKey(fileName))
+                {
+                    var columns = config.ParquetFiles[fileName].Columns;
+                    if (columns != null)
+                    {
+                        pkColumns[fileName] = columns
+                            .Where(c => c.IsPrimaryKey)
+                            .Select(c => c.Name)
+                            .ToList();
+                    }
+                    else
+                    {
+                        Program.Log($"No columns defined for '{fileName}' in config file '{configFilePath}'.");
+                        return null;
+                    }
+                }
+                else
+                {
+                    Program.Log($"No entry found for '{fileName}' in config file '{configFilePath}'.");
+                    return null;
+                }
+
+                return pkColumns.Count > 0 ? pkColumns : null;
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"Error loading config file '{configFilePath}': {ex.Message}");
                 return null;
             }
-
-            var pkColumns = new Dictionary<string, List<string>>();
-            string fileName = Path.GetFileName(targetFilePath);
-
-            if (config.ParquetFiles.ContainsKey(fileName))
-            {
-                pkColumns[fileName] = config.ParquetFiles[fileName].Columns
-                    .Where(c => c.IsPrimaryKey)
-                    .Select(c => c.Name)
-                    .ToList();
-            }
-            else if (config.ParquetFiles.ContainsKey("*.parquet"))
-            {
-                pkColumns[fileName] = config.ParquetFiles["*.parquet"].Columns
-                    .Where(c => c.IsPrimaryKey)
-                    .Select(c => c.Name)
-                    .ToList();
-            }
-            return pkColumns;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error loading config file '{configFilePath}': {ex.Message}");
-            return null;
         }
     }
 
-    private static void PrintUsage()
+    private static class UserFeedback
     {
-        Console.WriteLine("ParquetDuplicateFinder - Find duplicates in Parquet or CSV files");
-        Console.WriteLine("\nUsage:");
-        Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
-        Console.WriteLine("\nOptions:");
-        Console.WriteLine("  --folder                          Process all files in the specified folder");
-        Console.WriteLine("  --config <path>                   Path to JSON config file with PK columns");
-        Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
-        Console.WriteLine("  --delimiter <char>                CSV delimiter (fixed to ',' for folder mode)");
-        Console.WriteLine("  --header                          Treat first CSV row as header (always true for CSV)");
-        Console.WriteLine("  -f, --fields <field1,field2,...>  Fields to check for duplicates");
-        Console.WriteLine("  -c, --columns <index1,index2,...> Column indices for duplicates");
-        Console.WriteLine("  -v, --verbose                     Show detailed output");
-        Console.WriteLine("  -l, --limit <number>              Limit duplicate groups displayed");
-        Console.WriteLine("  -d, --findDuplicates              Find and display duplicates");
-        Console.WriteLine("  -pf, --printData                  Print file data");
-        Console.WriteLine("  -s, --stats                       Show column statistics");
-        Console.WriteLine("  --reconfigColumns                 Update pklist.json with file columns");
-        Console.WriteLine("  -h, --help                        Show this help message");
+        public static void PrintUsage()
+        {
+            Console.WriteLine("ParquetDuplicateFinder - Find duplicates in Parquet or CSV files");
+            Console.WriteLine("\nUsage:");
+            Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
+            Console.WriteLine("\nOptions:");
+            Console.WriteLine("  --folder                          Process all files in the specified folder");
+            Console.WriteLine("  --config <path>                   Path to JSON config file with PK columns");
+            Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
+            Console.WriteLine("  --delimiter <char>                CSV delimiter (fixed to ',' for folder mode)");
+            Console.WriteLine("  --header                          Treat first CSV row as header (always true for CSV)");
+            Console.WriteLine("  -f, --fields <field1,field2,...>  Fields to check for duplicates");
+            Console.WriteLine("  -c, --columns <index1,index2,...> Column indices for duplicates");
+            Console.WriteLine("  -v, --verbose                     Show detailed output");
+            Console.WriteLine("  -l, --limit <number>              Limit duplicate groups displayed");
+            Console.WriteLine("  -d, --findDuplicates              Find and display duplicates");
+            Console.WriteLine("  -pf, --printData                  Print file data");
+            Console.WriteLine("  -s, --stats                       Show column statistics");
+            Console.WriteLine("  --reconfigColumns                 Update pklist.json with file columns");
+            Console.WriteLine("  -h, --help                        Show this help message");
+        }
+
+        public static void PrintError(string message)
+        {
+            Console.WriteLine($"Error: {message}");
+        }
+
+        public static void PrintWarning(string message)
+        {
+            Console.WriteLine($"Warning: {message}");
+        }
+
+        public static void PrintInvalidArgumentError(string arg)
+        {
+            Console.WriteLine($"Invalid argument: {arg}");
+            PrintUsage();
+        }
     }
 
     public static void UpdateOptionsForFile(Options options, string filePath)
     {
-        // Update FilePath
         options.FilePath = filePath;
 
-        // Determine if the file is CSV or Parquet based on extension
         if (filePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
             filePath.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
         {
             options.IsCsv = true;
-            options.Delimiter = ','; // Fixed per your spec
-            options.HasHeader = true; // Fixed per your spec
+            options.Delimiter = options.Delimiter != '\0' ? options.Delimiter : ',';
+            options.HasHeader = true; // Default for CSV
         }
         else if (filePath.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
                  filePath.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
@@ -516,14 +549,13 @@ static class CommandLineParser
         }
         else
         {
-            throw new ArgumentException($"Unsupported file extension for {filePath}. Expected .csv, .csv.gz, .parquet, or .parquet.gz.");
+            Program.Log($"Skipping unsupported file: {filePath}");
+            return;
         }
 
-        // Load config-based primary key columns if no fields/columns specified
+        // Load config only for actual files being processed
         if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
-        {
-            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
-        }
+            options.PrimaryKeyColumns = ConfigLoader.LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
     }
 }
 
