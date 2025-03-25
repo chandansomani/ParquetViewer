@@ -142,8 +142,7 @@ partial class Program
         var fileInfo = new FileInfo(options.FilePath);
         if (options.IsCsv)
         {
-            Log($"Delimiter: '{options.Delimiter}' | Header: {options.HasHeader}");
-            Log($"File Size: {FileInfoProvider.FormatFileSize(fileInfo.Length)}");
+            Log($"Delimiter: '{options.Delimiter}' | Header: {options.HasHeader} | File Size: {FileInfoProvider.FormatFileSize(fileInfo.Length)}");
         }
         else
         {
@@ -317,7 +316,6 @@ static class CommandLineParser
         if (!ValidateOptions(options))
             return null;
 
-        // Config loading moved to UpdateOptionsForFile for individual files
         WarnAboutConflicts(options);
 
         return options;
@@ -447,57 +445,7 @@ static class CommandLineParser
         else if (options.ColumnIndices != null && options.ConfigFilePath != null)
             UserFeedback.PrintWarning("'--columns' specified; ignoring '--config'.");
     }
-
-    private static class ConfigLoader
-    {
-        public static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
-        {
-            try
-            {
-                string jsonContent = File.ReadAllText(configFilePath);
-                var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
-
-                if (config == null || config.ParquetFiles == null)
-                {
-                    Program.Log($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
-                    return null;
-                }
-
-                var pkColumns = new Dictionary<string, List<string>>();
-                string fileName = Path.GetFileName(targetFilePath);
-
-                if (config.ParquetFiles.ContainsKey(fileName))
-                {
-                    var columns = config.ParquetFiles[fileName].Columns;
-                    if (columns != null)
-                    {
-                        pkColumns[fileName] = columns
-                            .Where(c => c.IsPrimaryKey)
-                            .Select(c => c.Name)
-                            .ToList();
-                    }
-                    else
-                    {
-                        Program.Log($"No columns defined for '{fileName}' in config file '{configFilePath}'.");
-                        return null;
-                    }
-                }
-                else
-                {
-                    Program.Log($"No entry found for '{fileName}' in config file '{configFilePath}'.");
-                    return null;
-                }
-
-                return pkColumns.Count > 0 ? pkColumns : null;
-            }
-            catch (Exception ex)
-            {
-                Program.Log($"Error loading config file '{configFilePath}': {ex.Message}");
-                return null;
-            }
-        }
-    }
-
+    
     private static class UserFeedback
     {
         public static void PrintUsage()
@@ -548,7 +496,7 @@ static class CommandLineParser
         {
             options.IsCsv = true;
             options.Delimiter = options.Delimiter != '\0' ? options.Delimiter : ',';
-            options.HasHeader = true; // Default for CSV
+            options.HasHeader = options.HasHeader;
         }
         else if (filePath.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
                  filePath.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
@@ -563,7 +511,54 @@ static class CommandLineParser
 
         // Load config only for actual files being processed
         if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
-            options.PrimaryKeyColumns = ConfigLoader.LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
+            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
+    }
+
+    public static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
+    {
+        try
+        {
+            string jsonContent = File.ReadAllText(configFilePath);
+            var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+
+            if (config == null || config.ParquetFiles == null)
+            {
+                Program.Log($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
+                return null;
+            }
+
+            var pkColumns = new Dictionary<string, List<string>>();
+            string fileName = Path.GetFileName(targetFilePath);
+
+            if (config.ParquetFiles.ContainsKey(fileName))
+            {
+                var columns = config.ParquetFiles[fileName].Columns;
+                if (columns != null)
+                {
+                    pkColumns[fileName] = columns
+                        .Where(c => c.IsPrimaryKey)
+                        .Select(c => c.Name)
+                        .ToList();
+                }
+                else
+                {
+                    Program.Log($"No columns defined for '{fileName}' in config file '{configFilePath}'.");
+                    return null;
+                }
+            }
+            else
+            {
+                Program.Log($"No entry found for '{fileName}' in config file '{configFilePath}'.");
+                return null;
+            }
+
+            return pkColumns.Count > 0 ? pkColumns : null;
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"Error loading config file '{configFilePath}': {ex.Message}");
+            return null;
+        }
     }
 }
 

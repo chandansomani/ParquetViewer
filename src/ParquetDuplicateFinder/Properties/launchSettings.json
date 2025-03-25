@@ -18,7 +18,10 @@
     },
     "Folder": {
       "commandName": "Project",
-      "commandLineArgs": ". --folder -pf 10 --delimiter ;"
+      "commandLineArgs": ". --folder -pf 10"
+    },
+    "No Args": {
+      "commandName": "Project"
     }
   }
 }
