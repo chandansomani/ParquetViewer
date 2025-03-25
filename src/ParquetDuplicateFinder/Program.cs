@@ -61,19 +61,16 @@ partial class Program
 
                 if (options.ShowStats)
                 {
-                    DataProcessor.ShowColumnStats(dataTable, options.ColumnIndices, options.Verbose);
                     LogColumnStats(dataTable, options);
                 }
 
                 if (options.PrintData)
                 {
-                    DataProcessor.PrintData(dataTable, options.RowLimit, options.Verbose);
                     LogData(dataTable, options);
                 }
 
                 if (options.FindDuplicates)
                 {
-                    DataProcessor.FindDuplicates(dataTable, columnsToUse, options.Verbose, options.Limit);
                     LogDuplicates(dataTable, columnsToUse, options);
                 }
 
@@ -231,7 +228,7 @@ partial class Program
         int rowPosition = 0;
         Parallel.ForEach(dataTable.AsEnumerable(), row =>
         {
-            var key = DataProcessor.CreateKey(row, columnsToUse);
+            var key = CreateKey(row, columnsToUse);
             lock (duplicateGroups)
             {
                 if (!duplicateGroups.ContainsKey(key))
@@ -248,7 +245,7 @@ partial class Program
 
         if (duplicates.Count == 0)
         {
-            Log("No duplicates found.");
+            Log($"[{options.FilePath}] : No duplicates found.");
             return;
         }
 
@@ -271,6 +268,17 @@ partial class Program
         Log($"\nSummary: Found {totalDuplicates} duplicate records in {duplicates.Count} groups.");
     }
 
+    public static string CreateKey(DataRow row, List<string> columnsToUse)
+    {
+        var keyBuilder = new StringBuilder();
+        foreach (var column in columnsToUse)
+        {
+            keyBuilder.Append(row[column]?.ToString() ?? "NULL").Append("|");
+        }
+        using var sha256 = SHA256.Create();
+        var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(keyBuilder.ToString()));
+        return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+    }
 }
 static class CommandLineParser
 {
@@ -812,139 +820,6 @@ static class ParquetOperations
         return dataTable;
     }
 }
-
-
-
-
-static class DataProcessor
-{
-    public static void PrintData(DataTable dataTable, long rowLimit, bool verbose)
-    {
-        if (verbose) Console.WriteLine("Printing data...");
-
-        // Set an upper bound for column widths
-        const int MAX_COLUMN_WIDTH = 40;
-        const int SAMPLE_SIZE = 100; // Sample first 100 rows
-
-        // Calculate column widths based on header and sampled data
-        int[] columnWidths = new int[dataTable.Columns.Count];
-        for (int i = 0; i < dataTable.Columns.Count; i++)
-        {
-            string header = dataTable.Columns[i].ColumnName;
-            int sampleWidth = dataTable.Rows.Cast<DataRow>()
-                .Take(Math.Min(SAMPLE_SIZE, dataTable.Rows.Count)) // Sample up to 100 rows
-                .Select(r => (r[i]?.ToString() ?? "NULL").Length)
-                .DefaultIfEmpty(0)
-                .Max();
-            columnWidths[i] = Math.Min(Math.Max(header.Length, sampleWidth), MAX_COLUMN_WIDTH);
-        }
-
-        // Print header
-        Console.WriteLine(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
-            .Select((c, i) => c.ColumnName.PadRight(columnWidths[i]))));
-        Console.WriteLine(new string('─', columnWidths.Sum() + (dataTable.Columns.Count - 1) * 3));
-
-        // Print rows
-        long rowCount = 0;
-        foreach (DataRow row in dataTable.Rows)
-        {
-            if (rowLimit == -1 || rowCount < rowLimit)
-            {
-                Console.WriteLine(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
-                    .Select((c, i) =>
-                    {
-                        string value = row[c]?.ToString() ?? "NULL";
-                        return value.Length > columnWidths[i]
-                            ? value[..columnWidths[i]] // Truncate to column width
-                            : value.PadRight(columnWidths[i]); // Pad to column width
-                    })));
-                rowCount++;
-            }
-            else break;
-        }
-
-        if (verbose) Console.WriteLine($"Printed {rowCount} rows.");
-    }
-
-    public static void FindDuplicates(DataTable dataTable, List<string> columnsToUse, bool verbose, int limit)
-    {
-        if (verbose) Console.WriteLine($"Finding duplicates using columns: {string.Join(", ", columnsToUse)}");
-
-        // Store duplicate groups with row positions
-        var duplicateGroups = new Dictionary<string, List<(DataRow Row, int Position)>>();
-        int rowPosition = 0;
-        Parallel.ForEach(dataTable.AsEnumerable(), row =>
-        {
-            var key = CreateKey(row, columnsToUse);
-            lock (duplicateGroups)
-            {
-                if (!duplicateGroups.ContainsKey(key))
-                    duplicateGroups[key] = new List<(DataRow, int)>();
-                duplicateGroups[key].Add((row, rowPosition));
-            }
-            Interlocked.Increment(ref rowPosition); // Thread-safe position increment
-        });
-
-        // Filter to only duplicate groups (count > 1)
-        var duplicates = duplicateGroups
-            .Where(g => g.Value.Count > 1)
-            .OrderByDescending(g => g.Value.Count) // Sort by group size
-            .ToList();
-
-        if (duplicates.Count == 0)
-        {
-            Console.WriteLine("No duplicates found.");
-            return;
-        }
-
-        Console.WriteLine($"Found {duplicates.Count} duplicate groups.");
-
-        // Display limited number of groups
-        int displayLimit = limit > 0 ? Math.Min(limit, duplicates.Count) : duplicates.Count;
-        Console.WriteLine("═════ Duplicate Summary ═════");
-        Console.WriteLine($"{"Group #",-8} | {"Count",-6} | {"Row #",-12} | Record");
-        Console.WriteLine(new string('─', 8 + 3 + 6 + 3 + 12 + 3 + columnsToUse.Count * 20)); // Rough estimate for width
-
-        for (int i = 0; i < displayLimit; i++)
-        {
-            var group = duplicates[i];
-            var sample = group.Value[0]; // First record as sample
-            var sampleValues = string.Join(" | ", columnsToUse
-                .Select(c => (sample.Row[c]?.ToString() ?? "NULL").PadRight(20)[..Math.Min(20, (sample.Row[c]?.ToString() ?? "").Length)]));
-            Console.WriteLine($"{i + 1,-8} | {group.Value.Count,-6} | {sample.Position,-12} | {sampleValues}");
-        }
-
-        int totalDuplicates = duplicates.Sum(g => g.Value.Count - 1);
-        Console.WriteLine($"\nSummary: Found {totalDuplicates} duplicate records in {duplicates.Count} groups.");
-    }
-
-    public static void ShowColumnStats(DataTable dataTable, List<int> columnIndices, bool verbose)
-    {
-        if (verbose) Console.WriteLine("Displaying column statistics...");
-
-        Console.WriteLine("═════ Column Details ═════");
-        Console.WriteLine("All Available Columns:");
-        for (int i = 0; i < dataTable.Columns.Count; i++)
-        {
-            Console.WriteLine($"  {i,2}. {dataTable.Columns[i].ColumnName}");
-        }
-        Console.WriteLine("═════════════════════════");
-    }
-
-    public static string CreateKey(DataRow row, List<string> columnsToUse)
-    {
-        var keyBuilder = new StringBuilder();
-        foreach (var column in columnsToUse)
-        {
-            keyBuilder.Append(row[column]?.ToString() ?? "NULL").Append("|");
-        }
-        using var sha256 = SHA256.Create();
-        var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(keyBuilder.ToString()));
-        return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
-    }
-}
-
-
 
 static class FileInfoProvider
 {
