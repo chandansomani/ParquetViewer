@@ -14,6 +14,7 @@ namespace ParquetDuplicateFinder;
 
 class Program
 {
+    private static string logFilePath;
     static async Task Main(string[] args)
     {
         try
@@ -21,86 +22,252 @@ class Program
             var options = CommandLineParser.Parse(args);
             if (options == null) return;
 
+            InitializeLogging(options);
+
             if (options.ReconfigColumns)
             {
                 ConfigManager.ReconfigColumnsFromFile(options);
-                return; // Exit after updating config
+                Log("Updated pklist.json with file columns.");
+                return;
             }
 
-            List<string> columnsToUse;
+            var filesToProcess = options.IsFolderMode
+                ? Directory.EnumerateFiles(options.FolderPath, "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
+                               f.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase) ||
+                               f.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
+                               f.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
+                : new[] { options.FilePath };
 
-            if (options.IsCsv)
+            foreach (var filePath in filesToProcess)
             {
-                //using var reader = new StreamReader(options.FilePath);
-                using var fileStream = new FileStream(options.FilePath, FileMode.Open, FileAccess.Read);
-                Stream stream = fileStream;
+                Log($"Processing file: {filePath}");
 
-                // Check if the file is gzipped (based on file extension)
-                if (options.FilePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+                // Update options for the current file
+                CommandLineParser.UpdateOptionsForFile(options, filePath);
+
+                // Determine columns to use based on updated options
+                List<string> columnsToUse = await GetColumnsToUse(options);
+
+                if (options.Verbose || options.ShowStats)
                 {
-                    stream = new GZipStream(fileStream, CompressionMode.Decompress);
+                    FileInfoProvider.DisplayFileInfo(options);
+                    LogFileInfo(options);
                 }
 
-                using var reader = new StreamReader(stream);
-                using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = options.Delimiter.ToString(), HasHeaderRecord = options.HasHeader });
-                if (csv.Read() && options.HasHeader)
+                DataTable dataTable = options.IsCsv
+                    ? CsvOperations.LoadCsv(options, columnsToUse)
+                    : await ParquetOperations.LoadParquet(options, columnsToUse);
+
+                if (options.ShowStats)
                 {
-                    csv.ReadHeader();
-                    columnsToUse = ColumnSelector.GetColumnsToUse(options, csv.HeaderRecord);
+                    DataProcessor.ShowColumnStats(dataTable, options.ColumnIndices, options.Verbose);
+                    LogColumnStats(dataTable, options);
                 }
-                else if (!options.HasHeader && (options.ColumnIndices != null || options.Fields == null))
+
+                if (options.PrintData)
                 {
-                    columnsToUse = ColumnSelector.GetColumnsToUse(options, Enumerable.Range(0, csv.Context.Parser.Count).Select(i => $"Column_{i}").ToArray());
+                    DataProcessor.PrintData(dataTable, options.RowLimit, options.Verbose);
+                    LogData(dataTable, options);
                 }
-                else
+
+                if (options.FindDuplicates)
                 {
-                    columnsToUse = ColumnSelector.GetColumnsToUse(options);
+                    DataProcessor.FindDuplicates(dataTable, columnsToUse, options.Verbose, options.Limit);
+                    LogDuplicates(dataTable, columnsToUse, options);
                 }
-            }
-            else
-            {
-                var parquetEngine = await ParquetOperations.LoadParquet(options, new List<string> { }); // Load minimal to get schema
-                var availableFields = parquetEngine.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
-                columnsToUse = ColumnSelector.GetColumnsToUse(options, null, availableFields);
-            }
 
-            if (options.Verbose || options.ShowStats)
-            {
-                FileInfoProvider.DisplayFileInfo(options);
-            }
-
-            DataTable dataTable = options.IsCsv
-                ? CsvOperations.LoadCsv(options, columnsToUse)
-                : await ParquetOperations.LoadParquet(options, columnsToUse);
-
-            if (options.ShowStats)
-            {
-                DataProcessor.ShowColumnStats(dataTable, options.ColumnIndices, options.Verbose);
-            }
-
-            if (options.PrintData)
-            {
-                DataProcessor.PrintData(dataTable, options.RowLimit, options.Verbose);
-            }
-
-            if (options.FindDuplicates)
-            {
-                DataProcessor.FindDuplicates(dataTable, columnsToUse, options.Verbose, options.Limit);
+                Log($"Finished processing file: {filePath}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
-            if (ex is AllFilesSkippedException afse) Console.WriteLine($"Details: {afse.Message}");
-            else if (ex is SomeFilesSkippedException sfse) Console.WriteLine($"Details: {sfse.Message}");
-            else if (ex is FileReadException fre) Console.WriteLine($"Details: {fre.Message}");
-            else if (ex is MultipleSchemasFoundException msfe) Console.WriteLine($"Details: {msfe.Message}");
+            Log($"Error: {ex.Message}");
+            if (ex is AllFilesSkippedException afse) Log($"Details: {afse.Message}");
+            else if (ex is SomeFilesSkippedException sfse) Log($"Details: {sfse.Message}");
+            else if (ex is FileReadException fre) Log($"Details: {fre.Message}");
+            else if (ex is MultipleSchemasFoundException msfe) Log($"Details: {msfe.Message}");
         }
     }
+    private static async Task<List<string>> GetColumnsToUse(Options options)
+    {
+        if (options.IsCsv)
+        {
+            using var fileStream = new FileStream(options.FilePath, FileMode.Open, FileAccess.Read);
+            Stream stream = fileStream;
+
+            if (options.FilePath.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
+            {
+                stream = new GZipStream(fileStream, CompressionMode.Decompress);
+            }
+
+            using var reader = new StreamReader(stream);
+            using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = ",", HasHeaderRecord = true });
+            if (csv.Read() && options.HasHeader)
+            {
+                csv.ReadHeader();
+                return ColumnSelector.GetColumnsToUse(options, csv.HeaderRecord);
+            }
+            return ColumnSelector.GetColumnsToUse(options);
+        }
+        else
+        {
+            var parquetEngine = await ParquetOperations.LoadParquet(options, new List<string> { });
+            var availableFields = parquetEngine.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+            return ColumnSelector.GetColumnsToUse(options, null, availableFields);
+        }
+    }
+    
+
+    private static void InitializeLogging(Options options)
+    {
+        Directory.CreateDirectory(options.LogFolder);
+        string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        logFilePath = Path.Combine(options.LogFolder, $"Run_{timestamp}.log");
+        Log("Starting ParquetDuplicateFinder run...");
+    }
+
+    private static void Log(string message)
+    {
+        //Console.WriteLine(message);
+        File.AppendAllText(logFilePath, $"{DateTime.Now}: {message}\n");
+    }
+
+    private static void LogFileInfo(Options options)
+    {
+        Log("══════ File Information ══════");
+        Log($"File: {options.FilePath}");
+        Log($"Mode: {(options.IsCsv ? "CSV" : "Parquet")}");
+
+        var fileInfo = new FileInfo(options.FilePath);
+        if (options.IsCsv)
+        {
+            Log($"Delimiter: '{options.Delimiter}' | Header: {options.HasHeader}");
+            Log($"File Size: {FileInfoProvider.FormatFileSize(fileInfo.Length)}");
+        }
+        else
+        {
+            var parquetEngine = ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None).Result;
+            Log($"Total Records: {parquetEngine.RecordCount:N0}");
+            Log($"Number of Columns: {parquetEngine.Schema.Fields.Count()}");
+            Log("Schema Type Summary:");
+            var schemaTypes = parquetEngine.Schema.DataFields
+                .GroupBy(f => f.SchemaType)
+                .Select(g => new { Type = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count);
+            foreach (var type in schemaTypes)
+            {
+                Log($"  {type.Type,-20}: {type.Count} column(s)");
+            }
+            Log($"File Size: {FileInfoProvider.FormatFileSize(fileInfo.Length)}");
+        }
+        Log("══════════════════════════════");
+    }
+
+    private static void LogColumnStats(DataTable dataTable, Options options)
+    {
+        if (options.Verbose) Log("Displaying column statistics...");
+        Log("═════ Column Details ═════");
+        Log("All Available Columns:");
+        for (int i = 0; i < dataTable.Columns.Count; i++)
+        {
+            Log($"  {i,2}. {dataTable.Columns[i].ColumnName}");
+        }
+        Log("═════════════════════════");
+    }
+
+    private static void LogData(DataTable dataTable, Options options)
+    {
+        if (options.Verbose) Log("Printing data...");
+
+        const int MAX_COLUMN_WIDTH = 40;
+        const int SAMPLE_SIZE = 100;
+
+        int[] columnWidths = new int[dataTable.Columns.Count];
+        for (int i = 0; i < dataTable.Columns.Count; i++)
+        {
+            string header = dataTable.Columns[i].ColumnName;
+            int sampleWidth = dataTable.Rows.Cast<DataRow>()
+                .Take(Math.Min(SAMPLE_SIZE, dataTable.Rows.Count))
+                .Select(r => (r[i]?.ToString() ?? "NULL").Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            columnWidths[i] = Math.Min(Math.Max(header.Length, sampleWidth), MAX_COLUMN_WIDTH);
+        }
+
+        Log(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
+            .Select((c, i) => c.ColumnName.PadRight(columnWidths[i]))));
+        Log(new string('─', columnWidths.Sum() + (dataTable.Columns.Count - 1) * 3));
+
+        long rowCount = 0;
+        foreach (DataRow row in dataTable.Rows)
+        {
+            if (options.RowLimit == -1 || rowCount < options.RowLimit)
+            {
+                Log(string.Join(" | ", dataTable.Columns.Cast<DataColumn>()
+                    .Select((c, i) =>
+                    {
+                        string value = row[c]?.ToString() ?? "NULL";
+                        return value.Length > columnWidths[i]
+                            ? value[..columnWidths[i]]
+                            : value.PadRight(columnWidths[i]);
+                    })));
+                rowCount++;
+            }
+            else break;
+        }
+
+        if (options.Verbose) Log($"Printed {rowCount} rows.");
+    }
+
+    private static void LogDuplicates(DataTable dataTable, List<string> columnsToUse, Options options)
+    {
+        if (options.Verbose) Log($"Finding duplicates using columns: {string.Join(", ", columnsToUse)}");
+
+        var duplicateGroups = new Dictionary<string, List<(DataRow Row, int Position)>>();
+        int rowPosition = 0;
+        Parallel.ForEach(dataTable.AsEnumerable(), row =>
+        {
+            var key = DataProcessor.CreateKey(row, columnsToUse);
+            lock (duplicateGroups)
+            {
+                if (!duplicateGroups.ContainsKey(key))
+                    duplicateGroups[key] = new List<(DataRow, int)>();
+                duplicateGroups[key].Add((row, rowPosition));
+            }
+            Interlocked.Increment(ref rowPosition);
+        });
+
+        var duplicates = duplicateGroups
+            .Where(g => g.Value.Count > 1)
+            .OrderByDescending(g => g.Value.Count)
+            .ToList();
+
+        if (duplicates.Count == 0)
+        {
+            Log("No duplicates found.");
+            return;
+        }
+
+        Log($"Found {duplicates.Count} duplicate groups.");
+        Log("═════ Duplicate Summary ═════");
+        Log($"{"Group #",-8} | {"Count",-6} | {"Row #",-12} | Record");
+        Log(new string('─', 8 + 3 + 6 + 3 + 12 + 3 + columnsToUse.Count * 20));
+
+        int displayLimit = options.Limit > 0 ? Math.Min(options.Limit, duplicates.Count) : duplicates.Count;
+        for (int i = 0; i < displayLimit; i++)
+        {
+            var group = duplicates[i];
+            var sample = group.Value[0];
+            var sampleValues = string.Join(" | ", columnsToUse
+                .Select(c => (sample.Row[c]?.ToString() ?? "NULL").PadRight(20)[..Math.Min(20, (sample.Row[c]?.ToString() ?? "").Length)]));
+            Log($"{i + 1,-8} | {group.Value.Count,-6} | {sample.Position,-12} | {sampleValues}");
+        }
+
+        int totalDuplicates = duplicates.Sum(g => g.Value.Count - 1);
+        Log($"\nSummary: Found {totalDuplicates} duplicate records in {duplicates.Count} groups.");
+    }
 }
-
-
-
 static class CommandLineParser
 {
     private const string DefaultConfigFile = "pklist.json";
@@ -113,9 +280,10 @@ static class CommandLineParser
             return null;
         }
 
-        var options = new Options { FilePath = args[0] };
+        var options = new Options();
         var validArgs = new HashSet<string>
         {
+            "--folder",
             "--csv",
             "--delimiter",
             "--header",
@@ -132,12 +300,22 @@ static class CommandLineParser
         };
 
         bool configSpecified = false;
+        options.FilePath = args[0]; // First arg is file or folder path
 
         for (int i = 1; i < args.Length; i++)
         {
             string arg = args[i];
             switch (arg)
             {
+                case "--folder":
+                    options.IsFolderMode = true;
+                    options.FolderPath = options.FilePath; // Use first arg as folder path
+                    if (!Directory.Exists(options.FolderPath))
+                    {
+                        Console.WriteLine($"Error: Folder '{options.FolderPath}' does not exist.");
+                        return null;
+                    }
+                    break;
                 case "--config":
                     if (i + 1 < args.Length)
                     {
@@ -229,6 +407,12 @@ static class CommandLineParser
             }
         }
 
+        if (!options.IsFolderMode && !File.Exists(options.FilePath))
+        {
+            Console.WriteLine($"Error: File '{options.FilePath}' does not exist.");
+            return null;
+        }
+
         if (!configSpecified && File.Exists(DefaultConfigFile))
         {
             options.ConfigFilePath = DefaultConfigFile;
@@ -294,12 +478,13 @@ static class CommandLineParser
     {
         Console.WriteLine("ParquetDuplicateFinder - Find duplicates in Parquet or CSV files");
         Console.WriteLine("\nUsage:");
-        Console.WriteLine("  ParquetDuplicateFinder <file_path> [options]");
+        Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
         Console.WriteLine("\nOptions:");
+        Console.WriteLine("  --folder                          Process all files in the specified folder");
         Console.WriteLine("  --config <path>                   Path to JSON config file with PK columns");
         Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
-        Console.WriteLine("  --delimiter <char>                CSV delimiter (default: ',')");
-        Console.WriteLine("  --header                          Treat first CSV row as header");
+        Console.WriteLine("  --delimiter <char>                CSV delimiter (fixed to ',' for folder mode)");
+        Console.WriteLine("  --header                          Treat first CSV row as header (always true for CSV)");
         Console.WriteLine("  -f, --fields <field1,field2,...>  Fields to check for duplicates");
         Console.WriteLine("  -c, --columns <index1,index2,...> Column indices for duplicates");
         Console.WriteLine("  -v, --verbose                     Show detailed output");
@@ -310,11 +495,44 @@ static class CommandLineParser
         Console.WriteLine("  --reconfigColumns                 Update pklist.json with file columns");
         Console.WriteLine("  -h, --help                        Show this help message");
     }
+
+    public static void UpdateOptionsForFile(Options options, string filePath)
+    {
+        // Update FilePath
+        options.FilePath = filePath;
+
+        // Determine if the file is CSV or Parquet based on extension
+        if (filePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
+            filePath.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            options.IsCsv = true;
+            options.Delimiter = ','; // Fixed per your spec
+            options.HasHeader = true; // Fixed per your spec
+        }
+        else if (filePath.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
+                 filePath.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            options.IsCsv = false;
+        }
+        else
+        {
+            throw new ArgumentException($"Unsupported file extension for {filePath}. Expected .csv, .csv.gz, .parquet, or .parquet.gz.");
+        }
+
+        // Load config-based primary key columns if no fields/columns specified
+        if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
+        {
+            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
+        }
+    }
 }
 
 public class Options
 {
     public string FilePath { get; set; }
+    public string FolderPath { get; set; } // New: Folder path for folder mode
+    public bool IsFolderMode { get; set; } // New: Flag for folder mode
+    public string LogFolder { get; set; } = "Logs"; // New: Default log folder
     public List<string> Fields { get; set; }
     public List<int> ColumnIndices { get; set; }
     public bool Verbose { get; set; }
@@ -323,12 +541,12 @@ public class Options
     public bool PrintData { get; set; }
     public long RowLimit { get; set; } = -1;
     public bool IsCsv { get; set; }
-    public char Delimiter { get; set; } = ',';
+    public char Delimiter { get; set; } = ','; 
     public bool HasHeader { get; set; } = true;
     public bool ShowStats { get; set; }
     public string ConfigFilePath { get; set; }
     public Dictionary<string, List<string>> PrimaryKeyColumns { get; set; }
-    public bool ReconfigColumns { get; set; } // New option
+    public bool ReconfigColumns { get; set; }
 }
 
 public class ColumnConfig
@@ -681,7 +899,7 @@ static class DataProcessor
         Console.WriteLine("═════════════════════════");
     }
 
-    private static string CreateKey(DataRow row, List<string> columnsToUse)
+    public static string CreateKey(DataRow row, List<string> columnsToUse)
     {
         var keyBuilder = new StringBuilder();
         foreach (var column in columnsToUse)
@@ -732,7 +950,7 @@ static class FileInfoProvider
         Console.WriteLine("══════════════════════════════");
     }
 
-    private static string FormatFileSize(long bytes)
+    public static string FormatFileSize(long bytes)
     {
         string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
         int counter = 0;
@@ -825,7 +1043,7 @@ static class ConfigManager
         if (options.Verbose) Console.WriteLine($"Updated '{configFilePath}' with {columns.Count} columns from '{fileName}'.");
     }
 
-    private static List<string> GetCsvColumns(Options options)
+    public static List<string> GetCsvColumns(Options options)
     {
         try
         {
@@ -869,7 +1087,7 @@ static class ConfigManager
         }
     }
 
-    private static async Task<List<string>> GetParquetColumns(Options options)
+    public static async Task<List<string>> GetParquetColumns(Options options)
     {
         try
         {
