@@ -43,6 +43,9 @@ partial class Program
             {
                 Log($"Processing file: {filePath}");
 
+                if (!Program.IsFileAvailable(filePath))
+                    continue;
+
                 // Update options for the current file
                 CommandLineParser.UpdateOptionsForFile(options, filePath);
 
@@ -90,6 +93,26 @@ partial class Program
 
 partial class Program
 {
+    public static bool IsFileAvailable(string filePath)
+    {
+        try
+        {
+            using (FileStream fs = File.Open(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                return true;
+            }
+        }
+        catch (IOException)        
+        {
+            Log($"{filePath} unable to access file.");
+            return false;        
+        }
+        catch (UnauthorizedAccessException)        
+        {
+            Log($"{filePath} unable to access file.");
+            return false;        
+        }
+    }
     private static async Task<List<string>> GetColumnsToUse(Options options)
     {
         if (options.IsCsv)
