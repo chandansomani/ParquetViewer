@@ -22,15 +22,7 @@ partial class Program
             InitializeLogging(new());
             var options = CommandLineParser.Parse(args);
             if (options == null) return;
-
-
-            if (options.ReconfigColumns)
-            {
-                ConfigManager.ReconfigColumnsFromFile(options);
-                Log("Updated pklist.json with file columns.");
-                return;
-            }
-
+            
             var filesToProcess = options.IsFolderMode
                 ? Directory.EnumerateFiles(options.FolderPath, "*.*", SearchOption.TopDirectoryOnly)
                     .Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
@@ -46,8 +38,15 @@ partial class Program
                 if (!Program.IsFileAvailable(filePath))
                     continue;
 
+                if (options.ReconfigColumns)
+                {
+                    ConfigManager.ReconfigColumnsFromFile(options);
+                    Log("Updated pklist.json with file columns.");
+                    continue;
+                }
+
                 // Update options for the current file
-                CommandLineParser.UpdateOptionsForFile(options, filePath);
+                UpdateOptionsForFile(options, filePath);
 
                 // Determine columns to use based on updated options
                 List<string> columnsToUse = await GetColumnsToUse(options);
@@ -301,6 +300,80 @@ partial class Program
         var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(keyBuilder.ToString()));
         return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
     }
+
+    public static void UpdateOptionsForFile(Options options, string filePath)
+    {
+        options.FilePath = filePath;
+
+        if (filePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
+            filePath.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            options.IsCsv = true;
+            options.Delimiter = options.Delimiter != '\0' ? options.Delimiter : ',';
+            options.HasHeader = options.HasHeader;
+        }
+        else if (filePath.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
+                 filePath.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            options.IsCsv = false;
+        }
+        else
+        {
+            Program.Log($"Skipping unsupported file: {filePath}");
+            return;
+        }
+
+        // Load config only for actual files being processed
+        if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
+            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
+    }
+
+    public static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
+    {
+        try
+        {
+            string jsonContent = File.ReadAllText(configFilePath);
+            var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+
+            if (config == null || config.ParquetFiles == null)
+            {
+                Program.Log($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
+                return null;
+            }
+
+            var pkColumns = new Dictionary<string, List<string>>();
+            string fileName = Path.GetFileName(targetFilePath);
+
+            if (config.ParquetFiles.ContainsKey(fileName))
+            {
+                var columns = config.ParquetFiles[fileName].Columns;
+                if (columns != null)
+                {
+                    pkColumns[fileName] = columns
+                        .Where(c => c.IsPrimaryKey)
+                        .Select(c => c.Name)
+                        .ToList();
+                }
+                else
+                {
+                    Program.Log($"No columns defined for '{fileName}' in config file '{configFilePath}'.");
+                    return null;
+                }
+            }
+            else
+            {
+                Program.Log($"No entry found for '{fileName}' in config file '{configFilePath}'.");
+                return null;
+            }
+
+            return pkColumns.Count > 0 ? pkColumns : null;
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"Error loading config file '{configFilePath}': {ex.Message}");
+            return null;
+        }
+    }
 }
 static class CommandLineParser
 {
@@ -507,80 +580,6 @@ static class CommandLineParser
         {
             Console.WriteLine($"Invalid argument: {arg}");
             PrintUsage();
-        }
-    }
-
-    public static void UpdateOptionsForFile(Options options, string filePath)
-    {
-        options.FilePath = filePath;
-
-        if (filePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
-            filePath.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
-        {
-            options.IsCsv = true;
-            options.Delimiter = options.Delimiter != '\0' ? options.Delimiter : ',';
-            options.HasHeader = options.HasHeader;
-        }
-        else if (filePath.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
-                 filePath.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
-        {
-            options.IsCsv = false;
-        }
-        else
-        {
-            Program.Log($"Skipping unsupported file: {filePath}");
-            return;
-        }
-
-        // Load config only for actual files being processed
-        if (options.Fields == null && options.ColumnIndices == null && !string.IsNullOrEmpty(options.ConfigFilePath))
-            options.PrimaryKeyColumns = LoadPrimaryKeyColumns(options.ConfigFilePath, filePath);
-    }
-
-    public static Dictionary<string, List<string>> LoadPrimaryKeyColumns(string configFilePath, string targetFilePath)
-    {
-        try
-        {
-            string jsonContent = File.ReadAllText(configFilePath);
-            var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
-
-            if (config == null || config.ParquetFiles == null)
-            {
-                Program.Log($"Config file '{configFilePath}' is empty or missing 'ParquetFiles'.");
-                return null;
-            }
-
-            var pkColumns = new Dictionary<string, List<string>>();
-            string fileName = Path.GetFileName(targetFilePath);
-
-            if (config.ParquetFiles.ContainsKey(fileName))
-            {
-                var columns = config.ParquetFiles[fileName].Columns;
-                if (columns != null)
-                {
-                    pkColumns[fileName] = columns
-                        .Where(c => c.IsPrimaryKey)
-                        .Select(c => c.Name)
-                        .ToList();
-                }
-                else
-                {
-                    Program.Log($"No columns defined for '{fileName}' in config file '{configFilePath}'.");
-                    return null;
-                }
-            }
-            else
-            {
-                Program.Log($"No entry found for '{fileName}' in config file '{configFilePath}'.");
-                return null;
-            }
-
-            return pkColumns.Count > 0 ? pkColumns : null;
-        }
-        catch (Exception ex)
-        {
-            Program.Log($"Error loading config file '{configFilePath}': {ex.Message}");
-            return null;
         }
     }
 }
