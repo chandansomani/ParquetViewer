@@ -38,15 +38,14 @@ partial class Program
                 if (!Program.IsFileAvailable(filePath))
                     continue;
 
+                UpdateOptionsForFile(options, filePath);
+
                 if (options.ReconfigColumns)
                 {
                     ConfigManager.ReconfigColumnsFromFile(options);
                     Log("Updated pklist.json with file columns.");
                     continue;
                 }
-
-                // Update options for the current file
-                UpdateOptionsForFile(options, filePath);
 
                 // Determine columns to use based on updated options
                 List<string> columnsToUse = await GetColumnsToUse(options);
@@ -682,19 +681,30 @@ static class ColumnSelector
         {
             columnsToUse = options.PrimaryKeyColumns[fileName];
             if(columnsToUse.Count == 0)
+            {
                 Console.WriteLine($"Using primary key columns from config, but no columns marked as primarykey");
+                Program.Log($"Using primary key columns from config, but no columns marked as primarykey");
+            }
             if (options.Verbose) Console.WriteLine($"Using primary key columns from config: {string.Join(", ", columnsToUse)}");
         }
         // Priority 4: All columns
         else if (options.IsCsv && csvHeaders != null)
         {
             columnsToUse = csvHeaders.ToList();
-            if (options.Verbose) Console.WriteLine($"No specific columns provided; using all CSV columns: {string.Join(", ", columnsToUse)}");
+            if (options.Verbose) 
+            { 
+                Console.WriteLine($"No specific columns provided; using all CSV columns: {string.Join(", ", columnsToUse)}");
+                Program.Log($"No specific columns provided; using all CSV columns: {string.Join(", ", columnsToUse)}");
+            }
         }
         else if (!options.IsCsv && parquetFields != null)
         {
             columnsToUse = parquetFields;
-            if (options.Verbose) Console.WriteLine($"No specific columns provided; using all Parquet fields: {string.Join(", ", columnsToUse)}");
+            if (options.Verbose)
+            {
+                Console.WriteLine($"No specific columns provided; using all Parquet fields: {string.Join(", ", columnsToUse)}");
+                Program.Log($"No specific columns provided; using all Parquet fields: {string.Join(", ", columnsToUse)}");
+            }
         }
         else
         {
@@ -748,32 +758,55 @@ static class CsvOperations
         {
             csv.ReadHeader();
             headers = csv.HeaderRecord;
-            columnIndicesToLoad = columnsToUse
-                .Select(f => Array.IndexOf(headers, f))
-                .Where(i => i >= 0)
-                .ToList();
-
-            if (columnIndicesToLoad.Count < columnsToUse.Count)
+            if (columnsToUse == null || columnsToUse.Count == 0)
             {
-                var missing = columnsToUse.Except(columnIndicesToLoad.Select(i => headers[i])).ToList();
-                Console.WriteLine($"Warning: These columns were not found in CSV headers: {string.Join(", ", missing)}");
+                // Use all columns if columnsToUse is empty or null
+                columnIndicesToLoad = Enumerable.Range(0, headers.Length).ToList();
+                foreach (string header in headers)
+                {
+                    dataTable.Columns.Add(header);
+                }
             }
-
-            foreach (int index in columnIndicesToLoad)
+            else
             {
-                dataTable.Columns.Add(headers[index]);
+                columnIndicesToLoad = columnsToUse
+                    .Select(f => Array.IndexOf(headers, f))
+                    .Where(i => i >= 0)
+                    .ToList();
+
+                if (columnIndicesToLoad.Count < columnsToUse.Count)
+                {
+                    var missing = columnsToUse.Except(columnIndicesToLoad.Select(i => headers[i])).ToList();
+                    Console.WriteLine($"Warning: These columns were not found in CSV headers: {string.Join(", ", missing)}");
+                }
+
+                foreach (int index in columnIndicesToLoad)
+                {
+                    dataTable.Columns.Add(headers[index]);
+                }
             }
         }
         else
         {
             int fieldCount = csv.Context.Parser.Count;
-            columnIndicesToLoad = Enumerable.Range(0, Math.Min(fieldCount, columnsToUse.Count)).ToList();
-            foreach (var column in columnsToUse.Take(columnIndicesToLoad.Count))
+            if (columnsToUse == null || columnsToUse.Count == 0)
             {
-                dataTable.Columns.Add(column);
+                // Use all columns with default names if columnsToUse is empty or null
+                columnIndicesToLoad = Enumerable.Range(0, fieldCount).ToList();
+                for (int i = 0; i < fieldCount; i++)
+                {
+                    dataTable.Columns.Add($"Column{i}");
+                }
+            }
+            else
+            {
+                columnIndicesToLoad = Enumerable.Range(0, Math.Min(fieldCount, columnsToUse.Count)).ToList();
+                foreach (var column in columnsToUse.Take(columnIndicesToLoad.Count))
+                {
+                    dataTable.Columns.Add(column);
+                }
             }
         }
-
         do
         {
             var row = dataTable.NewRow();
