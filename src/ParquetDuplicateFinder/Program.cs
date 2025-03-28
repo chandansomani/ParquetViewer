@@ -635,83 +635,110 @@ static class ColumnSelector
 {
     public static List<string> GetColumnsToUse(Options options, string[] csvHeaders = null, List<string> parquetFields = null)
     {
-        List<string> columnsToUse = null;
         string fileName = Path.GetFileName(options.FilePath);
+        List<string> allColumns = GetAllColumns(options, csvHeaders, parquetFields);
 
         // Priority 1: --fields
+        if (TryUseFields(options, out var columnsToUse)) return columnsToUse;
+
+        // Priority 2: --columns
+        if (TryUseColumnIndices(options, csvHeaders, parquetFields, out columnsToUse)) return columnsToUse;
+
+        // Priority 3: --config with fallback to all columns
+        if (TryUseConfig(options, fileName, allColumns, out columnsToUse)) return columnsToUse;
+
+        // Priority 4: All columns
+        if (allColumns != null)
+        {
+            if (options.Verbose)
+            {
+                string source = options.IsCsv ? "CSV columns" : "Parquet fields";
+                Console.WriteLine($"No specific columns provided; using all {source}: {string.Join(", ", allColumns)}");
+                Program.Log($"No specific columns provided; using all {source}: {string.Join(", ", allColumns)}");
+            }
+            return allColumns;
+        }
+
+        throw new InvalidOperationException("No columns specified and no schema available to default to all columns.");
+    }
+
+    // Helper method to get all available columns
+    private static List<string> GetAllColumns(Options options, string[] csvHeaders, List<string> parquetFields)
+    {
+        if (options.IsCsv && csvHeaders != null) return csvHeaders.ToList();
+        if (!options.IsCsv && parquetFields != null) return parquetFields;
+        return null;
+    }
+
+    // Priority 1: Use --fields
+    private static bool TryUseFields(Options options, out List<string> columnsToUse)
+    {
+        columnsToUse = null;
         if (options.Fields != null && options.Fields.Count > 0)
         {
             columnsToUse = options.Fields;
             if (options.Verbose) Console.WriteLine($"Using fields from --fields: {string.Join(", ", columnsToUse)}");
+            return true;
         }
-        // Priority 2: --columns
-        else if (options.ColumnIndices != null && options.ColumnIndices.Count > 0)
+        return false;
+    }
+
+    // Priority 2: Use --columns
+    private static bool TryUseColumnIndices(Options options, string[] csvHeaders, List<string> parquetFields, out List<string> columnsToUse)
+    {
+        columnsToUse = null;
+        if (options.ColumnIndices == null || options.ColumnIndices.Count == 0) return false;
+
+        if (options.IsCsv && csvHeaders != null)
         {
-            if (options.IsCsv && csvHeaders != null)
-            {
-                columnsToUse = options.ColumnIndices
-                    .Where(i => i >= 0 && i < csvHeaders.Length)
-                    .Select(i => csvHeaders[i])
-                    .ToList();
-                if (columnsToUse.Count == 0)
-                {
-                    throw new ArgumentException("No valid column indices match the CSV headers.");
-                }
-                if (options.Verbose) Console.WriteLine($"Mapped column indices from --columns (CSV): {string.Join(", ", columnsToUse)}");
-            }
-            else if (!options.IsCsv && parquetFields != null)
-            {
-                columnsToUse = options.ColumnIndices
-                    .Where(i => i >= 0 && i < parquetFields.Count)
-                    .Select(i => parquetFields[i])
-                    .ToList();
-                if (columnsToUse.Count == 0)
-                {
-                    throw new ArgumentException("No valid column indices match the Parquet schema.");
-                }
-                if (options.Verbose) Console.WriteLine($"Mapped column indices from --columns (Parquet): {string.Join(", ", columnsToUse)}");
-            }
-            else
-            {
-                throw new InvalidOperationException("Column indices specified but no schema available to map them.");
-            }
-        }
-        // Priority 3: --config
-        else if (options.PrimaryKeyColumns != null && options.PrimaryKeyColumns.ContainsKey(fileName))
-        {
-            columnsToUse = options.PrimaryKeyColumns[fileName];
-            if(columnsToUse.Count == 0)
-            {
-                Console.WriteLine($"Using primary key columns from config, but no columns marked as primarykey");
-                Program.Log($"Using primary key columns from config, but no columns marked as primarykey");
-            }
-            if (options.Verbose) Console.WriteLine($"Using primary key columns from config: {string.Join(", ", columnsToUse)}");
-        }
-        // Priority 4: All columns
-        else if (options.IsCsv && csvHeaders != null)
-        {
-            columnsToUse = csvHeaders.ToList();
-            if (options.Verbose) 
-            { 
-                Console.WriteLine($"No specific columns provided; using all CSV columns: {string.Join(", ", columnsToUse)}");
-                Program.Log($"No specific columns provided; using all CSV columns: {string.Join(", ", columnsToUse)}");
-            }
-        }
-        else if (!options.IsCsv && parquetFields != null)
-        {
-            columnsToUse = parquetFields;
-            if (options.Verbose)
-            {
-                Console.WriteLine($"No specific columns provided; using all Parquet fields: {string.Join(", ", columnsToUse)}");
-                Program.Log($"No specific columns provided; using all Parquet fields: {string.Join(", ", columnsToUse)}");
-            }
-        }
-        else
-        {
-            throw new InvalidOperationException("No columns specified and no schema available to default to all columns.");
+            columnsToUse = options.ColumnIndices
+                .Where(i => i >= 0 && i < csvHeaders.Length)
+                .Select(i => csvHeaders[i])
+                .ToList();
+            if (columnsToUse.Count == 0) throw new ArgumentException("No valid column indices match the CSV headers.");
+            if (options.Verbose) Console.WriteLine($"Mapped column indices from --columns (CSV): {string.Join(", ", columnsToUse)}");
+            return true;
         }
 
-        return columnsToUse;
+        if (!options.IsCsv && parquetFields != null)
+        {
+            columnsToUse = options.ColumnIndices
+                .Where(i => i >= 0 && i < parquetFields.Count)
+                .Select(i => parquetFields[i])
+                .ToList();
+            if (columnsToUse.Count == 0) throw new ArgumentException("No valid column indices match the Parquet schema.");
+            if (options.Verbose) Console.WriteLine($"Mapped column indices from --columns (Parquet): {string.Join(", ", columnsToUse)}");
+            return true;
+        }
+
+        throw new InvalidOperationException("Column indices specified but no schema available to map them.");
+    }
+
+    // Priority 3: Use --config with fallback
+    private static bool TryUseConfig(Options options, string fileName, List<string> allColumns, out List<string> columnsToUse)
+    {
+        columnsToUse = null;
+        if (options.PrimaryKeyColumns == null || !options.PrimaryKeyColumns.ContainsKey(fileName)) return false;
+
+        columnsToUse = options.PrimaryKeyColumns[fileName];
+        if (columnsToUse.Count == 0)
+        {
+            if (allColumns == null)
+                throw new InvalidOperationException("No primary key columns specified in config and no schema available to default to all columns.");
+
+            columnsToUse = allColumns;
+            if (options.Verbose)
+            {
+                string source = options.IsCsv ? "CSV columns" : "Parquet fields";
+                Console.WriteLine($"Using primary key columns from config, but no columns marked as primary key; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
+                Program.Log($"Using primary key columns from config, but no columns marked as primary key; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
+            }
+        }
+        else if (options.Verbose)
+        {
+            Console.WriteLine($"Using primary key columns from config: {string.Join(", ", columnsToUse)}");
+        }
+        return true;
     }
 }
 
