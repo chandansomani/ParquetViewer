@@ -1,56 +1,120 @@
 {
-  "ParquetFiles": {
-    "sales_data.parquet": {
-      "Columns": [
+  "parquetFiles": {
+    "Visualizations.parquet.gz": {
+      "columns": [
         {
-          "Name": "OrderId",
-          "IsPrimaryKey": true
+          "name": "EngagementId",
+          "isPrimaryKey": true
         },
         {
-          "Name": "OrderDate",
-          "IsPrimaryKey": true
+          "name": "EngagementBusinessId",
+          "isPrimaryKey": true
         },
         {
-          "Name": "CustomerName",
-          "IsPrimaryKey": false
+          "name": "BusinessTypeId",
+          "isPrimaryKey": true
         },
         {
-          "Name": "Amount",
-          "IsPrimaryKey": false
+          "name": "TodoId",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "VisualizationGroupId",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "VisualizationGroupName",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "EngagementContentAreaId",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "ContentAreaName",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "EngagementAbcotdId",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "RelatedABCOTDs",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "IsVisualizationGroupActive",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "IsWorkingpaperActive",
+          "isPrimaryKey": false
         }
       ]
     },
-    "inventory_data.parquet": {
-      "Columns": [
+    "AttachmentDetails.parquet.gz": {
+      "columns": [
         {
-          "Name": "ProductId",
-          "IsPrimaryKey": true
+          "name": "EngagementID",
+          "isPrimaryKey": true
         },
         {
-          "Name": "WarehouseId",
-          "IsPrimaryKey": true
+          "name": "EngagementBusinessID",
+          "isPrimaryKey": true
         },
         {
-          "Name": "StockLevel",
-          "IsPrimaryKey": false
+          "name": "WorkingPaperID",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "AttachmentLinkID",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "Title",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "Description",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "FileName",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "DocumentType",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "UploadedDate",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "UploadBy",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "UploadbyID",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "AttachmentDate",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "AttachedBy",
+          "isPrimaryKey": false
+        },
+        {
+          "name": "AttachedByID",
+          "isPrimaryKey": true
+        },
+        {
+          "name": "IsActive",
+          "isPrimaryKey": false
         }
       ]
-    },
-    "customer_data.parquet": {
-      "Columns": [
-        {
-          "Name": "CustomerId",
-          "IsPrimaryKey": true
-        },
-        {
-          "Name": "Email",
-          "IsPrimaryKey": false
-        },
-        {
-          "Name": "JoinDate",
-          "IsPrimaryKey": false
-        }
-      ]
-    }    
+    }
   }
 }

@@ -153,6 +153,8 @@ partial class Program
         //Console.WriteLine(message);
         File.AppendAllText(logFilePath, $"{DateTime.Now}: {message}\n");
     }
+    public static void LogLineBreak() => File.AppendAllText(logFilePath, Environment.NewLine);
+    
 
     private static void LogFileInfo(Options options)
     {
@@ -238,6 +240,7 @@ partial class Program
         }
 
         if (options.Verbose) Log($"Printed {rowCount} rows.");
+        LogLineBreak();
     }
 
     private static void LogDuplicates(DataTable dataTable, List<string> columnsToUse, Options options)

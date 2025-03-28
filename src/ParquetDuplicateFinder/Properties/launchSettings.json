@@ -16,12 +16,24 @@
       "commandName": "Project",
       "commandLineArgs": "\"C:\\Users\\USER\\Downloads\\email-password-recovery-code.csv\" --delimiter ; --printData --csv --header -d --reconfigColumns -v"
     },
-    "Folder": {
-      "commandName": "Project",
-      "commandLineArgs": ". --folder -pf 10"
-    },
     "No Args": {
       "commandName": "Project"
+    },
+    "Reconfig": {
+      "commandName": "Project",
+      "commandLineArgs": ".\\ABCOTDsMaterilaity.csv --reconfigColumns"
+    },
+    "ReconfigFolder": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  --folder --reconfigColumns"
+    },
+    "PrintFolder": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  -pf 10"
+    },
+    "FolderDup": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  -d -v"
     }
   }
 }
