@@ -52,6 +52,12 @@ partial class Program
 
                 // Determine columns to use based on updated options
                 List<string> columnsToUse = await GetColumnsToUse(options);
+                
+                if (columnsToUse == null)
+                {
+                    Log($"Skipping file '{filePath}' due to schema mismatch.");
+                    continue; // Skip to next file
+                }
 
                 if (options.Verbose || options.ShowStats)
                 {
@@ -128,22 +134,27 @@ partial class Program
             }
 
             using var reader = new StreamReader(stream);
-            using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = options.Delimiter.ToString(), HasHeaderRecord = options.HasHeader });
+            using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                Delimiter = options.Delimiter.ToString(),
+                HasHeaderRecord = options.HasHeader
+            });
+
             if (csv.Read() && options.HasHeader)
             {
                 csv.ReadHeader();
-                return ColumnSelector.GetColumnsToUse(options, csv.HeaderRecord);
+                var columns = ColumnSelector.GetColumnsToUse(options, csv.HeaderRecord);
+                return columns; // Will return null if skipping
             }
-            return ColumnSelector.GetColumnsToUse(options);
+            return ColumnSelector.GetColumnsToUse(options); // Will return null if skipping
         }
         else
         {
             var parquetEngine = await ParquetOperations.LoadParquet(options, new List<string> { });
             var availableFields = parquetEngine.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
-            return ColumnSelector.GetColumnsToUse(options, null, availableFields);
+            return ColumnSelector.GetColumnsToUse(options, null, availableFields); // Will return null if skipping
         }
     }
-
     private static void InitializeLogging(Options options)
     {
         Directory.CreateDirectory(options.LogFolder);
@@ -657,17 +668,19 @@ static class ColumnSelector
                 return allColumns;
             }
         }
-        
-        // Priority 1: --fields //TODO Explicit this option only for Non Folder Mode
-        if (TryUseFields(options, out var columnsToUse)) return columnsToUse;
 
-        // Priority 2: --columns //TODO Explicit this option only for Non Folder Mode
+        if (TryUseFields(options, out var columnsToUse)) return columnsToUse;
         if (TryUseColumnIndices(options, csvHeaders, parquetFields, out columnsToUse)) return columnsToUse;
 
-        // Priority 3: --config with fallback to all columns
-        if (TryUseConfig(options, fileName, allColumns, out columnsToUse)) return columnsToUse;
+        if (TryUseConfig(options, fileName, allColumns, out columnsToUse))
+        {
+            if (columnsToUse == null) // Skip file due to schema mismatch
+            {
+                return null;
+            }
+            return columnsToUse;
+        }
 
-        // Priority 4: All columns
         if (allColumns != null)
         {
             if (options.Verbose)
@@ -681,7 +694,6 @@ static class ColumnSelector
 
         throw new InvalidOperationException("No columns specified and no schema available to default to all columns.");
     }
-
     // Helper method to get all available columns
     private static List<string> GetAllColumns(Options options, string[] csvHeaders, List<string> parquetFields)
     {
@@ -741,12 +753,17 @@ static class ColumnSelector
         if (options.PrimaryKeyColumns == null || !options.PrimaryKeyColumns.ContainsKey(fileName)) return false;
 
         columnsToUse = options.PrimaryKeyColumns[fileName];
-
         if (allColumns == null)
-            throw new InvalidOperationException("No primary key columns specified in config and no schema available to default to all columns.");
+        {
+            throw new InvalidOperationException("No schema available to validate config columns against.");
+        }
 
-        // Validate config schema against actual schema
         columnsToUse = ValidateConfigSchema(options, allColumns, columnsToUse);
+
+        if (columnsToUse == null) // Schema mismatch, skip file
+        {
+            return false;
+        }
 
         if (columnsToUse.Count == 0)
         {
@@ -754,8 +771,8 @@ static class ColumnSelector
             if (options.Verbose)
             {
                 string source = options.IsCsv ? "CSV columns" : "Parquet fields";
-                Console.WriteLine($"Using primary key columns from config, but no columns marked as primary key; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
-                Program.Log($"Using primary key columns from config, but no columns marked as primary key; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
+                Console.WriteLine($"Using primary key columns from config, but no columns specified; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
+                Program.Log($"Using primary key columns from config, but no columns specified; defaulting to all {source}: {string.Join(", ", columnsToUse)}");
             }
         }
         else if (options.Verbose)
@@ -764,12 +781,9 @@ static class ColumnSelector
         }
         return true;
     }
-
     private static List<string> ValidateConfigSchema(Options options, List<string> allColumns, List<string> configColumns)
     {
-        // Check columns in config that don't exist in the file schema
         var missingFromSchema = configColumns.Except(allColumns).ToList();
-        // Check columns in file schema that aren't in config
         var missingFromConfig = allColumns.Except(configColumns).ToList();
 
         bool hasMismatch = missingFromSchema.Count > 0 || missingFromConfig.Count > 0;
@@ -779,23 +793,21 @@ static class ColumnSelector
             string source = options.IsCsv ? "CSV" : "Parquet";
             var messages = new List<string>();
 
-            // Log columns in config not found in schema
             if (missingFromSchema.Count > 0)
             {
                 messages.Add($"Config contains columns not found in {source} schema: {string.Join(", ", missingFromSchema)}");
             }
 
-            // Log columns in schema not found in config
             if (missingFromConfig.Count > 0)
             {
                 messages.Add($"Columns in {source} schema not specified in config: {string.Join(", ", missingFromConfig)}");
             }
 
-            // Combine all mismatch messages
             string fullMessage = $"Schema mismatch detected between config and {source} file:\n" +
                                string.Join("\n", messages) +
                                $"\nAvailable columns: {string.Join(", ", allColumns)}" +
-                               $"\nConfig columns: {string.Join(", ", configColumns)}";
+                               $"\nConfig columns: {string.Join(", ", configColumns)}" +
+                               "\nSkipping this file due to schema mismatch.";
 
             if (options.Verbose)
             {
@@ -803,29 +815,10 @@ static class ColumnSelector
                 Program.Log(fullMessage);
             }
 
-            // Option 1: Strict mode - throw exception (uncomment if needed)
-            // throw new InvalidOperationException(fullMessage);
-
-            // Option 2: Graceful fallback - use only valid columns (current implementation)
-            var validColumns = configColumns.Intersect(allColumns).ToList();
-            if (options.Verbose && validColumns.Count < configColumns.Count)
-            {
-                Console.WriteLine($"Processing with available columns only: {string.Join(", ", validColumns)}");
-                Program.Log($"Processing with available columns only: {string.Join(", ", validColumns)}");
-            }
-            return validColumns;
-
-            // Option 3: Full fallback - use all columns (uncomment if needed)
-            // if (options.Verbose)
-            // {
-            //     Console.WriteLine($"Using all available columns instead: {string.Join(", ", allColumns)}");
-            //     Program.Log($"Using all available columns instead: {string.Join(", ", allColumns)}");
-            // }
-            // return allColumns;
+            return null; // Signal to skip the file
         }
 
-        // No mismatch, return original config columns
-        return configColumns;
+        return configColumns; // No mismatch, return original config columns
     }
 }
 
