@@ -46,7 +46,7 @@ partial class Program
                 if (options.ReconfigColumns)
                 {
                     ConfigManagerExcel.ReconfigColumnsFromFile(options);
-                    Log("Updated pklist.json with file columns.");
+                    Log("Updated pklist.xlsx with file columns.");
                     continue;
                 }
 
@@ -339,8 +339,12 @@ partial class Program
     {
         try
         {
-            string jsonContent = File.ReadAllText(configFilePath);
-            var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+            //JSON Config
+            //string jsonContent = File.ReadAllText(configFilePath);
+            //var config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile);
+
+            // Use ConfigManager's LoadFromExcel to read the Excel file
+            var config = ConfigManagerExcel.LoadFromExcel(configFilePath);
 
             if (config == null || config.ParquetFiles == null)
             {
@@ -384,7 +388,7 @@ partial class Program
 }
 static class CommandLineParser
 {
-    private const string DefaultConfigFile = "pklist.json";
+    private const string DefaultConfigFile = "pklist.xlsx";
     private static readonly HashSet<string> ValidArgs = new HashSet<string>
     {
         "--folder",
@@ -1015,7 +1019,7 @@ static class ConfigManagerExcel
         if (options.Verbose) Console.WriteLine($"Updated '{configFilePath}' with {columns.Count} columns from '{fileName}'.");
     }
 
-    private static ConfigFile LoadFromExcel(string filePath)
+    public static ConfigFile LoadFromExcel(string filePath)
     {
         if (!File.Exists(filePath))
         {
