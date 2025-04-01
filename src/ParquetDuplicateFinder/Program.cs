@@ -3,12 +3,15 @@ using CsvHelper;
 using ParquetViewer.Engine.Exceptions;
 using System.Data;
 using System.Globalization;
-using System.Text.Json.Serialization;
 using System.Text.Json;
 using ParquetViewer.Engine;
 using System.Text;
 using System.Security.Cryptography;
 using System.IO.Compression;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using DocumentFormat.OpenXml;
+using ExcelDataReader;
 
 namespace ParquetDuplicateFinder;
 
@@ -42,7 +45,7 @@ partial class Program
 
                 if (options.ReconfigColumns)
                 {
-                    ConfigManager.ReconfigColumnsFromFile(options);
+                    ConfigManagerExcel.ReconfigColumnsFromFile(options);
                     Log("Updated pklist.json with file columns.");
                     continue;
                 }
@@ -76,6 +79,7 @@ partial class Program
                 }
 
                 Log($"Finished processing file: {filePath}");
+                LogLineBreak();
             }
         }
         catch (Exception ex)
@@ -289,6 +293,7 @@ partial class Program
 
         int totalDuplicates = duplicates.Sum(g => g.Value.Count - 1);
         Log($"\nSummary: Found {totalDuplicates} duplicate records in {duplicates.Count} groups.");
+        LogLineBreak();
     }
 
     public static string CreateKey(DataRow row, List<string> columnsToUse)
@@ -624,16 +629,6 @@ public class ConfigFile
     public Dictionary<string, ParquetFileConfig> ParquetFiles { get; set; }
 }
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = true)]
-[JsonSerializable(typeof(ConfigFile))]
-[JsonSerializable(typeof(ParquetFileConfig))]
-[JsonSerializable(typeof(ColumnConfig))]
-[JsonSerializable(typeof(Dictionary<string, ParquetFileConfig>))]
-[JsonSerializable(typeof(List<ColumnConfig>))]
-public partial class ConfigJsonContext : JsonSerializerContext { }
-
-
-
 static class ColumnSelector
 {
     public static List<string> GetColumnsToUse(Options options, string[] csvHeaders = null, List<string> parquetFields = null)
@@ -952,12 +947,15 @@ static class FileInfoProvider
 }
 
 
-
-
-
-static class ConfigManager
+static class ConfigManagerExcel
 {
-    private const string DefaultConfigFile = "pklist.json";
+    private const string DefaultConfigFile = "pklist.xlsx";
+
+    static ConfigManagerExcel()
+    {
+        // Register code pages encoding to support Windows-1252
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+    }
 
     public static void ReconfigColumnsFromFile(Options options)
     {
@@ -982,29 +980,17 @@ static class ConfigManager
             return;
         }
 
-        // Load existing config or create new
-        ConfigFile config;
-        if (File.Exists(configFilePath))
-        {
-            string jsonContent = File.ReadAllText(configFilePath);
-            config = JsonSerializer.Deserialize(jsonContent, ConfigJsonContext.Default.ConfigFile) ?? new ConfigFile();
-            if (config.ParquetFiles == null)
-            {
-                config.ParquetFiles = new Dictionary<string, ParquetFileConfig>();
-            }
-        }
-        else
-        {
-            config = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
-        }
+        // Load existing config from Excel or create new
+        ConfigFile existingConfig = LoadFromExcel(configFilePath) ?? new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
+        ConfigFile newConfig = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>(existingConfig.ParquetFiles) };
 
         // Get or create entry for the file
-        if (!config.ParquetFiles.ContainsKey(fileName))
+        if (!newConfig.ParquetFiles.ContainsKey(fileName))
         {
-            config.ParquetFiles[fileName] = new ParquetFileConfig { Columns = new List<ColumnConfig>() };
+            newConfig.ParquetFiles[fileName] = new ParquetFileConfig { Columns = new List<ColumnConfig>() };
         }
 
-        var existingColumns = config.ParquetFiles[fileName].Columns ?? new List<ColumnConfig>();
+        var existingColumns = newConfig.ParquetFiles[fileName].Columns ?? new List<ColumnConfig>();
         var existingNames = existingColumns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Add new columns if not already present
@@ -1021,13 +1007,194 @@ static class ConfigManager
             }
         }
 
-        config.ParquetFiles[fileName].Columns = existingColumns;
+        newConfig.ParquetFiles[fileName].Columns = existingColumns;
 
-        // Save updated config
-        string updatedJson = JsonSerializer.Serialize(config, ConfigJsonContext.Default.ConfigFile);
-        File.WriteAllText(configFilePath, updatedJson);
+        // Save updated config to Excel, preserving existing data
+        SaveToExcel(newConfig, configFilePath);
 
         if (options.Verbose) Console.WriteLine($"Updated '{configFilePath}' with {columns.Count} columns from '{fileName}'.");
+    }
+
+    private static ConfigFile LoadFromExcel(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read);
+            using var reader = ExcelReaderFactory.CreateReader(stream);
+            var result = reader.AsDataSet(new ExcelDataSetConfiguration()
+            {
+                ConfigureDataTable = (_) => new ExcelDataTableConfiguration()
+                {
+                    UseHeaderRow = true
+                }
+            });
+
+            var table = result.Tables[0];
+            var config = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
+
+            foreach (DataRow row in table.Rows)
+            {
+                string parquetName = row["ParquetName"]?.ToString();
+                string columnName = row["ParquetColumns"]?.ToString();
+                bool isPrimaryKey = bool.TryParse(row["isPrimaryKeyColumn"]?.ToString(), out bool value) && value;
+
+                if (string.IsNullOrEmpty(parquetName) || string.IsNullOrEmpty(columnName))
+                    continue;
+
+                if (!config.ParquetFiles.ContainsKey(parquetName))
+                {
+                    config.ParquetFiles[parquetName] = new ParquetFileConfig { Columns = new List<ColumnConfig>() };
+                }
+
+                // Only add if not already present to avoid duplicates
+                var columns = config.ParquetFiles[parquetName].Columns;
+                if (!columns.Any(c => c.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    columns.Add(new ColumnConfig
+                    {
+                        Name = columnName,
+                        IsPrimaryKey = isPrimaryKey
+                    });
+                }
+            }
+
+            return config;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading Excel file '{filePath}': {ex.Message}");
+            return null;
+        }
+    }
+
+    private static void SaveToExcel(ConfigFile newConfig, string filePath)
+    {
+        try
+        {
+            // Load existing data first to preserve anything not in current config
+            ConfigFile existingConfig = LoadFromExcel(filePath) ?? new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
+
+            // Merge new config with existing config
+            foreach (var kvp in newConfig.ParquetFiles)
+            {
+                if (!existingConfig.ParquetFiles.ContainsKey(kvp.Key))
+                {
+                    existingConfig.ParquetFiles[kvp.Key] = kvp.Value;
+                }
+                else
+                {
+                    var existingColumns = existingConfig.ParquetFiles[kvp.Key].Columns ?? new List<ColumnConfig>();
+                    var newColumns = kvp.Value.Columns ?? new List<ColumnConfig>();
+                    var existingNames = existingColumns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var column in newColumns)
+                    {
+                        if (!existingNames.Contains(column.Name))
+                        {
+                            existingColumns.Add(column);
+                        }
+                        else
+                        {
+                            // Update existing column's IsPrimaryKey if it differs
+                            var existingColumn = existingColumns.First(c => c.Name.Equals(column.Name, StringComparison.OrdinalIgnoreCase));
+                            existingColumn.IsPrimaryKey = column.IsPrimaryKey;
+                        }
+                    }
+                    existingConfig.ParquetFiles[kvp.Key].Columns = existingColumns;
+                }
+            }
+
+            // If file exists, update it; otherwise create new
+            if (File.Exists(filePath))
+            {
+                using var spreadsheetDocument = SpreadsheetDocument.Open(filePath, true);
+                var workbookPart = spreadsheetDocument.WorkbookPart;
+                var worksheetPart = workbookPart.WorksheetParts.First();
+                var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
+
+                // Clear existing data (except header)
+                var rows = sheetData.Elements<Row>().ToList();
+                foreach (var row in rows.Skip(1)) // Skip header row
+                {
+                    row.Remove();
+                }
+
+                // Add all data rows from merged config
+                foreach (var file in existingConfig.ParquetFiles)
+                {
+                    foreach (var column in file.Value.Columns ?? new List<ColumnConfig>())
+                    {
+                        var row = new Row();
+                        row.Append(
+                            new Cell() { CellValue = new CellValue(file.Key), DataType = CellValues.String },
+                            new Cell() { CellValue = new CellValue(column.Name), DataType = CellValues.String },
+                            new Cell() { CellValue = new CellValue(column.IsPrimaryKey.ToString()), DataType = CellValues.String }
+                        );
+                        sheetData.Append(row);
+                    }
+                }
+
+                worksheetPart.Worksheet.Save();
+                workbookPart.Workbook.Save();
+            }
+            else
+            {
+                // Create new file if it doesn't exist
+                using var spreadsheetDocument = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook);
+
+                var workbookPart = spreadsheetDocument.AddWorkbookPart();
+                workbookPart.Workbook = new Workbook();
+
+                var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                worksheetPart.Worksheet = new Worksheet(new SheetData());
+
+                var sheets = spreadsheetDocument.WorkbookPart.Workbook.AppendChild(new Sheets());
+                var sheet = new Sheet()
+                {
+                    Id = spreadsheetDocument.WorkbookPart.GetIdOfPart(worksheetPart),
+                    SheetId = 1,
+                    Name = "Sheet1"
+                };
+                sheets.Append(sheet);
+
+                var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
+
+                // Add header row
+                var headerRow = new Row();
+                headerRow.Append(
+                    new Cell() { CellValue = new CellValue("ParquetName"), DataType = CellValues.String },
+                    new Cell() { CellValue = new CellValue("ParquetColumns"), DataType = CellValues.String },
+                    new Cell() { CellValue = new CellValue("isPrimaryKeyColumn"), DataType = CellValues.String }
+                );
+                sheetData.Append(headerRow);
+
+                // Add all data rows from merged config
+                foreach (var file in existingConfig.ParquetFiles)
+                {
+                    foreach (var column in file.Value.Columns ?? new List<ColumnConfig>())
+                    {
+                        var row = new Row();
+                        row.Append(
+                            new Cell() { CellValue = new CellValue(file.Key), DataType = CellValues.String },
+                            new Cell() { CellValue = new CellValue(column.Name), DataType = CellValues.String },
+                            new Cell() { CellValue = new CellValue(column.IsPrimaryKey.ToString()), DataType = CellValues.String }
+                        );
+                        sheetData.Append(row);
+                    }
+                }
+
+                workbookPart.Workbook.Save();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error writing to Excel file '{filePath}': {ex.Message}");
+        }
     }
 
     public static List<string> GetCsvColumns(Options options)
@@ -1051,7 +1218,7 @@ static class ConfigManager
                 stream = new GZipStream(fileStream, CompressionMode.Decompress);
             }
 
-            using var reader = new StreamReader(stream);            
+            using var reader = new StreamReader(stream);
             using var csv = new CsvReader(reader, config);
 
             if (!csv.Read()) return new List<string>();
