@@ -396,7 +396,7 @@ static class CommandLineParser
         "--delimiter",
         "--header",
         "-f", "--fields",
-        "-c", "--columns",
+        "-c", "--columns","--allColumns",
         "-v", "--verbose",
         "-l", "--limit",
         "-d", "--findDuplicates",
@@ -488,6 +488,9 @@ static class CommandLineParser
                             .Where(n => int.TryParse(n, out _))
                             .Select(int.Parse)
                             .ToList();
+                    break;
+                case "--allColumns":
+                    options.AllColumns = true;
                     break;
                 case "-v":
                 case "--verbose":
@@ -603,6 +606,7 @@ public class Options
     public string LogFolder { get; set; } = "Logs"; // New: Default log folder
     public List<string> Fields { get; set; }
     public List<int> ColumnIndices { get; set; }
+    public bool AllColumns { get; set; }
     public bool Verbose { get; set; }
     public int Limit { get; set; } = -1;
     public bool FindDuplicates { get; set; }
@@ -640,10 +644,24 @@ static class ColumnSelector
         string fileName = Path.GetFileName(options.FilePath);
         List<string> allColumns = GetAllColumns(options, csvHeaders, parquetFields);
 
-        // Priority 1: --fields
+        if (options.AllColumns)
+        {
+            if (allColumns != null)
+            {
+                if (options.Verbose)
+                {
+                    string source = options.IsCsv ? "CSV columns" : "Parquet fields";
+                    Console.WriteLine($"Using all {source}: {string.Join(", ", allColumns)}");
+                    Program.Log($"Using all {source}: {string.Join(", ", allColumns)}");
+                }
+                return allColumns;
+            }
+        }
+        
+        // Priority 1: --fields //TODO Explicit this option only for Non Folder Mode
         if (TryUseFields(options, out var columnsToUse)) return columnsToUse;
 
-        // Priority 2: --columns
+        // Priority 2: --columns //TODO Explicit this option only for Non Folder Mode
         if (TryUseColumnIndices(options, csvHeaders, parquetFields, out columnsToUse)) return columnsToUse;
 
         // Priority 3: --config with fallback to all columns
@@ -723,11 +741,15 @@ static class ColumnSelector
         if (options.PrimaryKeyColumns == null || !options.PrimaryKeyColumns.ContainsKey(fileName)) return false;
 
         columnsToUse = options.PrimaryKeyColumns[fileName];
+
+        if (allColumns == null)
+            throw new InvalidOperationException("No primary key columns specified in config and no schema available to default to all columns.");
+
+        // Validate config schema against actual schema
+        columnsToUse = ValidateConfigSchema(options, allColumns, columnsToUse);
+
         if (columnsToUse.Count == 0)
         {
-            if (allColumns == null)
-                throw new InvalidOperationException("No primary key columns specified in config and no schema available to default to all columns.");
-
             columnsToUse = allColumns;
             if (options.Verbose)
             {
@@ -741,6 +763,46 @@ static class ColumnSelector
             Console.WriteLine($"Using primary key columns from config: {string.Join(", ", columnsToUse)}");
         }
         return true;
+    }
+
+    private static List<string> ValidateConfigSchema(Options options, List<string> allColumns, List<string> configColumns)
+    {
+        var missingColumns = configColumns.Except(allColumns).ToList();
+        if (missingColumns.Count > 0)
+        {
+            string source = options.IsCsv ? "CSV" : "Parquet";
+            string errorMessage = $"Config columns do not match {source} schema. " +
+                                $"Missing columns: {string.Join(", ", missingColumns)}. " +
+                                $"Available columns: {string.Join(", ", allColumns)}";
+
+            if (options.Verbose)
+            {
+                Console.WriteLine(errorMessage);
+                Program.Log(errorMessage);
+            }
+
+            // Option 1: Strict mode - throw exception
+            // throw new InvalidOperationException(errorMessage);
+
+            // Option 2: Graceful fallback - use only valid columns (current implementation)
+            var validColumns = configColumns.Intersect(allColumns).ToList();
+            if (options.Verbose && validColumns.Count < configColumns.Count)
+            {
+                Console.WriteLine($"Falling back to available columns only: {string.Join(", ", validColumns)}");
+                Program.Log($"Falling back to available columns only: {string.Join(", ", validColumns)}");
+            }
+            return validColumns;
+
+            // Option 3: Full fallback - use all columns
+            // if (options.Verbose)
+            // {
+            //     Console.WriteLine($"Using all available columns instead: {string.Join(", ", allColumns)}");
+            //     Program.Log($"Using all available columns instead: {string.Join(", ", allColumns)}");
+            // }
+            // return allColumns;
+        }
+
+        return configColumns; // Return original columns if schema matches
     }
 }
 
