@@ -767,33 +767,55 @@ static class ColumnSelector
 
     private static List<string> ValidateConfigSchema(Options options, List<string> allColumns, List<string> configColumns)
     {
-        var missingColumns = configColumns.Except(allColumns).ToList();
-        if (missingColumns.Count > 0)
+        // Check columns in config that don't exist in the file schema
+        var missingFromSchema = configColumns.Except(allColumns).ToList();
+        // Check columns in file schema that aren't in config
+        var missingFromConfig = allColumns.Except(configColumns).ToList();
+
+        bool hasMismatch = missingFromSchema.Count > 0 || missingFromConfig.Count > 0;
+
+        if (hasMismatch)
         {
             string source = options.IsCsv ? "CSV" : "Parquet";
-            string errorMessage = $"Config columns do not match {source} schema. " +
-                                $"Missing columns: {string.Join(", ", missingColumns)}. " +
-                                $"Available columns: {string.Join(", ", allColumns)}";
+            var messages = new List<string>();
+
+            // Log columns in config not found in schema
+            if (missingFromSchema.Count > 0)
+            {
+                messages.Add($"Config contains columns not found in {source} schema: {string.Join(", ", missingFromSchema)}");
+            }
+
+            // Log columns in schema not found in config
+            if (missingFromConfig.Count > 0)
+            {
+                messages.Add($"Columns in {source} schema not specified in config: {string.Join(", ", missingFromConfig)}");
+            }
+
+            // Combine all mismatch messages
+            string fullMessage = $"Schema mismatch detected between config and {source} file:\n" +
+                               string.Join("\n", messages) +
+                               $"\nAvailable columns: {string.Join(", ", allColumns)}" +
+                               $"\nConfig columns: {string.Join(", ", configColumns)}";
 
             if (options.Verbose)
             {
-                Console.WriteLine(errorMessage);
-                Program.Log(errorMessage);
+                Console.WriteLine(fullMessage);
+                Program.Log(fullMessage);
             }
 
-            // Option 1: Strict mode - throw exception
-            // throw new InvalidOperationException(errorMessage);
+            // Option 1: Strict mode - throw exception (uncomment if needed)
+            // throw new InvalidOperationException(fullMessage);
 
             // Option 2: Graceful fallback - use only valid columns (current implementation)
             var validColumns = configColumns.Intersect(allColumns).ToList();
             if (options.Verbose && validColumns.Count < configColumns.Count)
             {
-                Console.WriteLine($"Falling back to available columns only: {string.Join(", ", validColumns)}");
-                Program.Log($"Falling back to available columns only: {string.Join(", ", validColumns)}");
+                Console.WriteLine($"Processing with available columns only: {string.Join(", ", validColumns)}");
+                Program.Log($"Processing with available columns only: {string.Join(", ", validColumns)}");
             }
             return validColumns;
 
-            // Option 3: Full fallback - use all columns
+            // Option 3: Full fallback - use all columns (uncomment if needed)
             // if (options.Verbose)
             // {
             //     Console.WriteLine($"Using all available columns instead: {string.Join(", ", allColumns)}");
@@ -802,7 +824,8 @@ static class ColumnSelector
             // return allColumns;
         }
 
-        return configColumns; // Return original columns if schema matches
+        // No mismatch, return original config columns
+        return configColumns;
     }
 }
 
