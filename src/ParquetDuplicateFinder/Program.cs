@@ -3,7 +3,6 @@ using CsvHelper;
 using ParquetViewer.Engine.Exceptions;
 using System.Data;
 using System.Globalization;
-using System.Text.Json;
 using ParquetViewer.Engine;
 using System.Text;
 using System.Security.Cryptography;
@@ -96,7 +95,7 @@ partial class Program
             else if (ex is FileReadException fre) Log($"Details: {fre.Message}");
             else if (ex is MultipleSchemasFoundException msfe) Log($"Details: {msfe.Message}");
         }
-    }    
+    }
 }
 
 partial class Program
@@ -162,13 +161,13 @@ partial class Program
         logFilePath = Path.Combine(options.LogFolder, $"Run_{timestamp}.log");
         Log("Starting ParquetDuplicateFinder with args :");
         foreach (string arg in args) Log($"{arg} ");
-        Log("");
+        LogLineBreak();
     }
 
-    public static void Log(string message)
+    public static void Log(string message, bool newLine = true)
     {
         //Console.WriteLine(message);
-        File.AppendAllText(logFilePath, $"{DateTime.Now}: {message}\n");
+        File.AppendAllText(logFilePath, $"{DateTime.Now}: {message}{(newLine ? "\n" : string.Empty)}");
     }
     public static void LogLineBreak() => File.AppendAllText(logFilePath, Environment.NewLine);
     
@@ -578,7 +577,7 @@ static class CommandLineParser
             Console.WriteLine("  ParquetDuplicateFinder <file_or_folder_path> [options]");
             Console.WriteLine("\nOptions:");
             Console.WriteLine("  --folder                          Process all files in the specified folder");
-            Console.WriteLine("  --config <path>                   Path to JSON config file with PK columns");
+            Console.WriteLine("  --config <path>                   Path to Excel config file with PK columns");
             Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
             Console.WriteLine("  --delimiter <char>                CSV delimiter (fixed to ',' for folder mode)");
             Console.WriteLine("  --header                          Treat first CSV row as header (always true for CSV)");
@@ -590,7 +589,7 @@ static class CommandLineParser
             Console.WriteLine("  -d, --findDuplicates              Find and display duplicates");
             Console.WriteLine("  -pf, --printData                  Print file data");
             Console.WriteLine("  -s, --stats                       Show column statistics");
-            Console.WriteLine("  --reconfigColumns                 Update pklist.json with file columns");
+            Console.WriteLine("  --reconfigColumns                 Update pklist.xlsx with file columns");
             Console.WriteLine("  -h, --help                        Show this help message");
         }
 
@@ -784,6 +783,7 @@ static class ColumnSelector
         }
         return true;
     }
+    
     private static List<string> ValidateConfigSchema(Options options, List<string> allColumns, List<string> configColumns)
     {
         var missingFromSchema = configColumns.Except(allColumns).ToList();
@@ -844,6 +844,7 @@ static class CsvOperations
             HasHeaderRecord = hasHeader,
             IgnoreBlankLines = true,
             TrimOptions = TrimOptions.Trim,
+            BadDataFound = context => Program.Log($"Skipped Bad data found with RowContents: {context.RawRecord}", false)
         };
 
         //using var reader = new StreamReader(filePath);
@@ -917,15 +918,25 @@ static class CsvOperations
                 }
             }
         }
-        do
+        try
         {
-            var row = dataTable.NewRow();
-            for (int i = 0; i < columnIndicesToLoad.Count; i++)
+            do
             {
-                row[i] = csv.GetField(columnIndicesToLoad[i])?.Trim() ?? "NULL";
-            }
-            dataTable.Rows.Add(row);
-        } while (csv.Read());
+                var row = dataTable.NewRow();
+                for (int i = 0; i < columnIndicesToLoad.Count; i++)
+                {
+                    row[i] = csv.GetField(columnIndicesToLoad[i])?.Trim() ?? "NULL";
+                }
+                dataTable.Rows.Add(row);
+            } while (csv.Read());
+        }
+        catch (Exception ex)
+        {
+            if(options.Verbose)Console.WriteLine(ex.Message);
+            Program.Log(ex.Message);
+            throw ;
+        }
+        
 
         if (options.Verbose) Console.WriteLine($"Loaded {dataTable.Rows.Count} rows from CSV.");
         return dataTable;
