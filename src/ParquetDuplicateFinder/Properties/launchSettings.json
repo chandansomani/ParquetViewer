@@ -25,7 +25,7 @@
     },
     "ReconfigFolder": {
       "commandName": "Project",
-      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  --folder --reconfigColumns"
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  --folder --reconfigColumns -v"
     },
     "PrintFolder": {
       "commandName": "Project",
@@ -33,7 +33,11 @@
     },
     "FolderDup": {
       "commandName": "Project",
-      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  -d -v"
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish --folder -d -v"
+    },
+    "FileCheck": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  -d"
     }
   }
 }

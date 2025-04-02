@@ -22,7 +22,7 @@ partial class Program
     {
         try
         {
-            InitializeLogging(new());
+            InitializeLogging(new(), args);            
             var options = CommandLineParser.Parse(args);
             if (options == null) return;
             
@@ -155,12 +155,14 @@ partial class Program
             return ColumnSelector.GetColumnsToUse(options, null, availableFields); // Will return null if skipping
         }
     }
-    private static void InitializeLogging(Options options)
+    private static void InitializeLogging(Options options, string[] args)
     {
         Directory.CreateDirectory(options.LogFolder);
         string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         logFilePath = Path.Combine(options.LogFolder, $"Run_{timestamp}.log");
-        Log("Starting ParquetDuplicateFinder run...");
+        Log("Starting ParquetDuplicateFinder with args :");
+        foreach (string arg in args) Log($"{arg} ");
+        Log("");
     }
 
     public static void Log(string message)
@@ -298,7 +300,7 @@ partial class Program
             var group = duplicates[i];
             var sample = group.Value[0];
             var sampleValues = string.Join(" | ", columnsToUse
-                .Select(c => (sample.Row[c]?.ToString() ?? "NULL").PadRight(20)[..Math.Min(20, (sample.Row[c]?.ToString() ?? "").Length)]));
+                .Select(c => (sample.Row[c]?.ToString() ?? "NULL").PadRight(36)[..Math.Min(36, (sample.Row[c]?.ToString() ?? "").Length)]));
             Log($"{i + 1,-8} | {group.Value.Count,-6} | {sample.Position,-12} | {sampleValues}");
         }
 
@@ -580,6 +582,7 @@ static class CommandLineParser
             Console.WriteLine("  --csv                             Process a CSV file instead of Parquet");
             Console.WriteLine("  --delimiter <char>                CSV delimiter (fixed to ',' for folder mode)");
             Console.WriteLine("  --header                          Treat first CSV row as header (always true for CSV)");
+            Console.WriteLine("  --allColumns                      All Fields to check for duplicates");
             Console.WriteLine("  -f, --fields <field1,field2,...>  Fields to check for duplicates");
             Console.WriteLine("  -c, --columns <index1,index2,...> Column indices for duplicates");
             Console.WriteLine("  -v, --verbose                     Show detailed output");
@@ -758,12 +761,12 @@ static class ColumnSelector
             throw new InvalidOperationException("No schema available to validate config columns against.");
         }
 
-        columnsToUse = ValidateConfigSchema(options, allColumns, columnsToUse);
+        //columnsToUse = ValidateConfigSchema(options, allColumns, columnsToUse);
 
-        if (columnsToUse == null) // Schema mismatch, skip file
-        {
-            return false;
-        }
+        //if (columnsToUse == null) // Schema mismatch, skip file
+        //{
+        //    return false;
+        //}
 
         if (columnsToUse.Count == 0)
         {
@@ -815,7 +818,7 @@ static class ColumnSelector
                 Program.Log(fullMessage);
             }
 
-            return null; // Signal to skip the file
+            //return null; // Signal to skip the file
         }
 
         return configColumns; // No mismatch, return original config columns
