@@ -38,6 +38,18 @@
     "FileCheck": {
       "commandName": "Project",
       "commandLineArgs": "C:\\Users\\csomani\\source\\repos\\ParquetProcessor\\src\\ParquetDuplicateFinder\\bin\\Release\\net9.0\\win-x64\\publish  -d"
+    },
+    "TestFile": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\csomani\\Downloads\\EngagementOwnerInformation2.csv -pf"
+    },
+    "ProdFolder32": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Users\\csomani\\Downloads\\Stage Full Load Parquets\" -d"
+    },
+    "Test help": {
+      "commandName": "Project",
+      "commandLineArgs": ". --help"
     }
   }
 }
