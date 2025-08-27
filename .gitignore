@@ -1,0 +1,9 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/LRParquetsDupChecker/bin
+/.vs
+/LRParquetsDupChecker/obj
+/ParquetViewer.Engine/bin
+/ParquetViewer.Engine/obj
