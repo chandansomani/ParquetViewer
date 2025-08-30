@@ -17,6 +17,8 @@ namespace ParquetDuplicateFinder;
 [JsonSerializable(typeof(Dictionary<string, ParquetFileConfig>))]
 [JsonSerializable(typeof(List<ColumnConfig>))]
 public partial class ConfigJsonContext : JsonSerializerContext { }
+
+/*
 static class ConfigManagerJson
 {
     private const string DefaultConfigFile = "pklist.json";
@@ -150,3 +152,4 @@ static class ConfigManagerJson
         }
     }
 }
+*/

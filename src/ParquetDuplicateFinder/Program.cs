@@ -408,6 +408,73 @@ partial class Program
             return null;
         }
     }
+
+    private static void LogMissingConfigAndFiles(Options options)
+    {
+        Log("══════ Configuration and File Comparison ══════");
+        string configFilePath = options.ConfigFilePath;
+        string folderPath = options.IsFolderMode ? options.FolderPath : Path.GetDirectoryName(options.FilePath);
+
+        if (string.IsNullOrEmpty(folderPath))
+        {
+            Log("Error: Could not determine folder path.");
+            return;
+        }
+
+        // 1. Get all Parquet files in the folder
+        var parquetFiles = Directory.EnumerateFiles(folderPath, "*.*", SearchOption.TopDirectoryOnly)
+            .Where(f => f.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
+            .Select(Path.GetFileName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // 2. Load the configuration
+        var config = ConfigManagerExcel.LoadFromExcel(configFilePath);
+        if (config == null || config.ParquetFiles == null)
+        {
+            Log($"Error: Could not load or find config file '{configFilePath}'.");
+            Log("═══════════════════════════════════════════════");
+            return;
+        }
+
+        var configEntries = config.ParquetFiles.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // 3. Find files in the folder that are missing a config entry
+        var filesMissingConfig = parquetFiles.Except(configEntries).ToList();
+
+        if (filesMissingConfig.Any())
+        {
+            Log("Files found in folder but missing in pklist.xlsx:");
+            foreach (var file in filesMissingConfig)
+            {
+                Log($"  - {file}");
+            }
+        }
+        else
+        {
+            Log("All Parquet files in the folder have an entry in pklist.xlsx.");
+        }
+
+        LogLineBreak();
+
+        // 4. Find config entries that are missing a corresponding file
+        var configMissingFiles = configEntries.Except(parquetFiles).ToList();
+
+        if (configMissingFiles.Any())
+        {
+            Log("Entries in pklist.xlsx but missing a corresponding file in the folder:");
+            foreach (var entry in configMissingFiles)
+            {
+                Log($"  - {entry}");
+            }
+        }
+        else
+        {
+            Log("All entries in pklist.xlsx correspond to a file in the folder.");
+        }
+
+        Log("═══════════════════════════════════════════════");
+    }
 }
 static class CommandLineParser
 {
@@ -428,6 +495,7 @@ static class CommandLineParser
         "-h", "--help"
         ,"--config"
         ,"--reconfigColumns"
+        ,"--checkConfig"
     };
 
     public static Options Parse(string[] args)
@@ -442,6 +510,7 @@ static class CommandLineParser
         if (options == null) return null;
 
         if (options.ReconfigColumns) return options;
+        if (options.CheckConfigAndFiles) return options;
 
         if (!ValidateOptions(options))
             return null;
@@ -456,6 +525,8 @@ static class CommandLineParser
         var initialPath = args[0].Equals(".") ? Directory.GetCurrentDirectory() : args[0];
         var options = new Options();
 
+        
+        
         // Check if initial path is a directory and set mode accordingly
         if (Directory.Exists(initialPath))
         {
@@ -544,6 +615,9 @@ static class CommandLineParser
                 case "--reconfigColumns":
                     options.ReconfigColumns = true;
                     break;
+                case "--checkConfig":
+                    options.CheckConfigAndFiles = true;
+                    break;
             }
         }
 
@@ -601,6 +675,7 @@ static class CommandLineParser
             Console.WriteLine("  -pf, --printData                  Print file data");
             Console.WriteLine("  -s, --stats                       Show column statistics");
             Console.WriteLine("  --reconfigColumns                 Update pklist.xlsx with file columns");
+            Console.WriteLine("  --checkConfig                     Check pklist.xlsx with file columns");
             Console.WriteLine("  -h, --help                        Show this help message");
         }
 
@@ -643,6 +718,7 @@ public class Options
     public string ConfigFilePath { get; set; }
     public Dictionary<string, List<string>> PrimaryKeyColumns { get; set; }
     public bool ReconfigColumns { get; set; }
+    public bool CheckConfigAndFiles { get; set; } = false;
 }
 
 public class ColumnConfig
@@ -1358,4 +1434,74 @@ static class ConfigManagerExcel
             return null;
         }
     }
+
+    public static async Task CompareConfigWithParquetFiles(string folderPath, string configFilePath)
+    {
+        // 1. Load the Excel configuration
+        var config = LoadFromExcel(configFilePath);
+        if (config == null || config.ParquetFiles == null)
+        {
+            Console.WriteLine($"Error: Could not load or find config file '{configFilePath}'.");
+            return;
+        }
+
+        // 2. Iterate through the Parquet files
+        var parquetFiles = Directory.EnumerateFiles(folderPath, "*.parquet", SearchOption.TopDirectoryOnly)
+                                    .ToList();
+
+        foreach (var filePath in parquetFiles)
+        {
+            string fileName = Path.GetFileName(filePath);
+            Console.WriteLine($"\nComparing file: {fileName}");
+
+            // 3. Get the schema for the file
+            List<string> parquetColumns;
+            try
+            {
+                var parquetEngine = await ParquetViewer.Engine.ParquetEngine.OpenFileOrFolderAsync(filePath, CancellationToken.None);
+                parquetColumns = parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Error reading schema from {fileName}: {ex.Message}");
+                continue;
+            }
+
+            // 4. Perform the comparison
+            if (config.ParquetFiles.ContainsKey(fileName))
+            {
+                var configColumns = config.ParquetFiles[fileName].Columns;
+                if (configColumns == null)
+                {
+                    Console.WriteLine($"  Warning: No columns defined for '{fileName}' in config.");
+                    continue;
+                }
+
+                var configColumnNames = configColumns.Select(c => c.Name).ToList();
+
+                // Columns in Parquet but not in config
+                var missingInConfig = parquetColumns.Except(configColumnNames, StringComparer.OrdinalIgnoreCase).ToList();
+                if (missingInConfig.Any())
+                {
+                    Console.WriteLine($"  - Columns in file '{fileName}' but missing in config: {string.Join(", ", missingInConfig)}");
+                }
+
+                // Columns in config but not in Parquet
+                var missingInParquet = configColumnNames.Except(parquetColumns, StringComparer.OrdinalIgnoreCase).ToList();
+                if (missingInParquet.Any())
+                {
+                    Console.WriteLine($"  - Columns in config but missing in file '{fileName}': {string.Join(", ", missingInParquet)}");
+                }
+
+                // You cannot automate the isPrimaryKeyColumn check without another data source, but you can report on it.
+                // This is a placeholder for your manual action step.
+            }
+            else
+            {
+                Console.WriteLine($"  - No entry found for '{fileName}' in the config file. All columns are 'missing'.");
+            }
+        }
+    }
+
+
 }
