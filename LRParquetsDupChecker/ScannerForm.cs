@@ -1,70 +1,37 @@
 ﻿using LRPayloadValidatorGUI;
 using System.Data;
+using System.Text;
 
 namespace LRParquetsDupChecker
 {
     public partial class ScannerForm : Form
     {
-        Options options;
-        DataTable artifactTable;
-        List<ColumnMetadata> columns;
-        ConfigFile? pkMasterInfo;
-
-        private List<FileProcessingTask> taskQueue = new List<FileProcessingTask>();
+        private Options options;
+        private ConfigFile? pkMasterInfo;
         private CancellationTokenSource cts;
-        private int tasksCompleted = 0;
+
+        private DataGridManager dataGridManager;
+        private TaskQueueManager taskQueueManager;
 
         public ScannerForm()
         {
             InitializeComponent();
-            InitializeTaskQueueUI();
-            artifactTable = new DataTable();
-
+            InitializeManagers();
+            LoadConfigFile();
             options = new Options();
+        }
 
-            columns = new List<ColumnMetadata>
-            {
-                new(ArtifactColumns.SRNO, typeof(int), ArtifactColumns.SRNO, true),
-                new(ArtifactColumns.Select, typeof(bool), ArtifactColumns.Select, true),
-                new(ArtifactColumns.FileName, typeof(string), ArtifactColumns.FileName, false),
-                new(ArtifactColumns.Status, typeof(string), ArtifactColumns.Status, false),
-                new(ArtifactColumns.FullPath, typeof(string), ArtifactColumns.FullPath, false, false), // hidden
-                new(ArtifactColumns.SchemaMatch, typeof(bool), ArtifactColumns.SchemaMatch, false),
-                new(ArtifactColumns.ColumnNamesMatch, typeof(bool), ArtifactColumns.ColumnNamesMatch, false),
-                new(ArtifactColumns.ColumnSequenceMatch, typeof(bool), ArtifactColumns.ColumnSequenceMatch, false),
-                new(ArtifactColumns.DuplicateCheckDone, typeof(bool), ArtifactColumns.DuplicateCheckDone, false),
-                new(ArtifactColumns.DuplicatesFound, typeof(int), ArtifactColumns.DuplicatesFound, false),
-                new(ArtifactColumns.NullsFound, typeof(int), ArtifactColumns.NullsFound, false),
-            };
+        private void InitializeManagers()
+        {
+            dataGridManager = new DataGridManager(dataGridView1);
+            taskQueueManager = new TaskQueueManager(listViewTasks, progressBarOverall, this);
 
-            dataGridView1.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
-            dataGridView1.DataSource = artifactTable;
+            startToolStripMenuItem.Enabled = true;
+            cancelToolStripMenuItem.Enabled = false;
+        }
 
-            foreach (var col in columns)
-            {
-                artifactTable.Columns.Add(col.Name, col.DataType);
-            }
-
-            dataGridView1.Columns[ArtifactColumns.SRNO].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            dataGridView1.Columns[ArtifactColumns.DuplicatesFound].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            dataGridView1.Columns[ArtifactColumns.NullsFound].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            dataGridView1.Columns[ArtifactColumns.Status].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-
-
-
-            // Configure columns dynamically
-            foreach (var col in columns)
-            {
-                var gridCol = dataGridView1.Columns[col.Name];
-                if (gridCol != null)
-                {
-                    gridCol.HeaderText = col.DisplayName;
-                    gridCol.ReadOnly = !col.IsEditable;
-                    gridCol.Visible = col.Visible;
-                }
-            }
-
-
+        private void LoadConfigFile()
+        {
             if (File.Exists(PKConfigManager.DefaultConfigFile))
             {
                 options.ConfigFilePath = PKConfigManager.DefaultConfigFile;
@@ -74,27 +41,10 @@ namespace LRParquetsDupChecker
             {
                 pkMasterInfo = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
             }
-
         }
 
-        private void InitializeTaskQueueUI()
-        {
-            // Setup ListView
-            listViewTasks.View = View.Details;
-            listViewTasks.FullRowSelect = true;
-            listViewTasks.Columns.Add("ID", 50);
-            listViewTasks.Columns.Add("File Name", 200);
-            listViewTasks.Columns.Add("Status", 100);
-            listViewTasks.Columns.Add("Result", 200);
-
-            progressBarOverall.Minimum = 0;
-            progressBarOverall.Value = 0;
-            progressBarOverall.Step = 1;
-            startToolStripMenuItem.Enabled = true;
-            cancelToolStripMenuItem.Enabled = false;
-        }
-
-        public void OpenFolder()
+        // Event Handlers
+        private void openFolderToolStripMenuItem_Click(object sender, EventArgs e)
         {
             string folderPath;
             using (var dlg = new FolderBrowserDialog())
@@ -102,275 +52,59 @@ namespace LRParquetsDupChecker
                 if (dlg.ShowDialog() == DialogResult.OK)
                     folderPath = dlg.SelectedPath;
                 else
-                    folderPath = string.Empty;
+                    return;
             }
 
-            IEnumerable<string> filesToProcess;
-            if (folderPath == string.Empty)
-            {
-                /** Check & Implement Action Operation **/
-                filesToProcess = new[] { options.FilePath };
-                artifactTable.Rows.Clear();
-            }
-            else
-            {
-                this.Text = this.Text + " - " + folderPath;
-                /** Load all valid parquet Filenames of current dir to fileList UIComponent **/
-                filesToProcess = Directory.EnumerateFiles(folderPath, "*.*", SearchOption.TopDirectoryOnly)
-                    .Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
-                               f.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase) ||
-                               f.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
-                               f.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase));
-
-                artifactTable.Rows.Clear();
-                int i = 1; // For SRNo
-                foreach (var file in filesToProcess)
-                {
-                    var rowValues = new object[columns.Count];
-
-                    for (int colIdx = 0; colIdx < columns.Count; colIdx++)
-                    {
-                        var col = columns[colIdx];
-
-                        switch (col.Name)
-                        {
-                            case ArtifactColumns.SRNO:
-                                rowValues[colIdx] = i++;
-                                break;
-                            case ArtifactColumns.Select:
-                                rowValues[colIdx] = false;
-                                break;
-                            case ArtifactColumns.FileName:
-                                rowValues[colIdx] = Path.GetFileName(file);
-                                break;
-                            case ArtifactColumns.FullPath:
-                                rowValues[colIdx] = file;
-                                break;
-                            case ArtifactColumns.SchemaMatch:
-                            case ArtifactColumns.ColumnNamesMatch:
-                            case ArtifactColumns.ColumnSequenceMatch:
-                            case ArtifactColumns.DuplicateCheckDone:
-                                rowValues[colIdx] = false;
-                                break;
-                            case ArtifactColumns.DuplicatesFound:
-                            case ArtifactColumns.NullsFound:
-                                rowValues[colIdx] = 0;
-                                break;
-                            case ArtifactColumns.Status:
-                                rowValues[colIdx] = "Pending";
-                                break;
-                            default:
-                                rowValues[colIdx] = DBNull.Value; // For any unexpected columns
-                                break;
-                        }
-                    }
-                    artifactTable.Rows.Add(rowValues);
-                }
-            }
+            this.Text = $"Scanner Form - {folderPath}";
+            dataGridManager.LoadFilesFromFolder(folderPath);
         }
-
-        private void openFolderToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            OpenFolder();
-        }
-
-        private async void openParquetToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            
-        }
-
-        /*
-        public async Task ProcessSelectedArtifactsAsync(int maxDegreeOfParallelism = 2)
-        {
-            string selectColumn = ArtifactColumns.Select;
-            string statusColumn = ArtifactColumns.Status;
-
-            var selectedRows = new List<DataGridViewRow>();
-            foreach (DataGridViewRow row in dataGridView1.Rows)
-            {
-                if (row.IsNewRow || !row.Visible)
-                    continue;
-                var selectCell = row.Cells[selectColumn];
-                if (selectCell.Value != null && bool.TryParse(selectCell.Value.ToString(), out bool isSelected) && isSelected)
-                {
-                    selectedRows.Add(row);
-                    row.Cells[selectColumn].Value = false;
-                }
-            }
-
-            var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
-            var tasks = new List<Task>();
-
-            foreach (var row in selectedRows)
-            {
-                await semaphore.WaitAsync();
-                tasks.Add(Task.Run(async () =>
-                {
-                    try
-                    {
-                        string? fileName = row.Cells[ArtifactColumns.FullPath].Value?.ToString();
-                        string outcome = !string.IsNullOrEmpty(fileName)
-                            ? await PerformBusinessLogicAsync(fileName)
-                            : "Can't Operate File";
-
-                        dataGridView1.Invoke(new Action(() =>
-                        {
-                            row.Cells[statusColumn].Value = outcome;
-                        }));
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
-                }));
-            }
-
-            await Task.WhenAll(tasks);
-        }
-
-        private async Task<string> PerformBusinessLogicAsync(string fileName)
-        {
-            // Simulate async work
-            await Task.Delay(1000);
-
-            string response;
-            if (System.IO.File.Exists(fileName)) {
-                    AddTasksToQueue(new List<string> { fileName });
-                    response = "Added";
-            }
-            else
-                response = "File Not Found";
-            return response;
-
-        }
-        */
-
-        public void AddSelectedArtifactsToQueue()
-        {
-            string selectColumn = ArtifactColumns.Select;
-            var selectedFiles = new List<string>();
-
-            foreach (DataGridViewRow row in dataGridView1.Rows)
-            {
-                if (row.IsNewRow || !row.Visible)
-                    continue;
-
-                var selectCell = row.Cells[selectColumn];
-                if (selectCell.Value != null && bool.TryParse(selectCell.Value.ToString(), out bool isSelected) && isSelected)
-                {
-                    string filePath = row.Cells[ArtifactColumns.FullPath].Value?.ToString();
-                    if (!string.IsNullOrEmpty(filePath))
-                        selectedFiles.Add(filePath);
-
-                    row.Cells[selectColumn].Value = false; // Unselect after adding
-                }
-            }
-
-            AddTasksToQueue(selectedFiles);
-        }
-
-
 
         private void selectAllToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            int selectColIndex = artifactTable.Columns.IndexOf("Select");
-
-            // Loop through each row and set "Select" to true
-            foreach (DataRow row in artifactTable.Rows)
-            {
-                row["Select"] = true;
-            }
+            dataGridManager.SelectAll(true);
         }
 
         private void deSelectAllToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            int selectColIndex = artifactTable.Columns.IndexOf("Select");
-
-            // Loop through each row and set "Select" to true
-            foreach (DataRow row in artifactTable.Rows)
-            {
-                row["Select"] = false;
-            }
+            dataGridManager.SelectAll(false);
         }
 
         private void loadDataDictionaryToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            if (File.Exists(PKConfigManager.DefaultConfigFile))
-            {
-                options.ConfigFilePath = PKConfigManager.DefaultConfigFile;
-                pkMasterInfo = PKConfigManager.LoadFromExcel(options.ConfigFilePath);
-            }
-            else
-            {
-                pkMasterInfo = new ConfigFile { ParquetFiles = new Dictionary<string, ParquetFileConfig>() };
-            }
-            toolStripStatusLabel1.Text = $"Loaded - Data Dictionary, Parquet Files Count : {pkMasterInfo.ParquetFiles.Count}";
+            LoadConfigFile();
+            toolStripStatusLabel1.Text = $"Loaded - Data Dictionary, Parquet Files Count : {pkMasterInfo?.ParquetFiles.Count}";
         }
 
         private void verifyFilesWithDDToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            //toolStripStatusLabel1.Text = $"Data Dictionary File Count : {pkMasterInfo.ParquetFiles.Count}";
-
-            // Loop through each row in artifactTable
-            for (int i = 0; i < artifactTable.Rows.Count; i++)
-            {
-                DataRow row = artifactTable.Rows[i];
-                string fileName = row[ArtifactColumns.FileName]?.ToString();
-
-                // Check if fileName exists in pkMasterInfo.ParquetFiles
-                //if (pkMasterInfo.ParquetFiles.ContainsKey(fileName))
-                if (pkMasterInfo.ParquetFiles.Keys.Any(k => k.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    // Update DataGridView row background color to light green
-                    dataGridView1.Rows[i].DefaultCellStyle.BackColor = Color.FromArgb(240, 255, 240); // Light green tint
-                    row[ArtifactColumns.Select] = true;
-                }
-                else
-                {
-                    // Optionally reset color if not matched
-                    dataGridView1.Rows[i].DefaultCellStyle.BackColor = Color.FromArgb(245, 200, 200);
-                    row[ArtifactColumns.Select] = false;
-                }
-            }
+            VerifyFilesWithDataDictionary();
+        }
+        
+        private void addToQueueToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            var selectedFiles = dataGridManager.GetSelectedFiles();
+            taskQueueManager.AddTasks(selectedFiles);
+            toolStripStatusLabel1.Text = "Selected files added to the task queue.";
         }
 
 
-        private void AddTasksToQueue(List<string> files)
+        // Business Logic
+        private void VerifyFilesWithDataDictionary()
         {
-            int nextId = taskQueue.Count + 1;
-
-            foreach (var file in files)
+            for (int i = 0; i < dataGridView1.Rows.Count; i++)
             {
-                if (System.IO.File.Exists(file))
-                {
-                    string fileName = Path.GetFileName(file);
-                    var task = new FileProcessingTask
-                    {
-                        Id = nextId++,
-                        FileName = fileName,
-                        FullPath = file,
-                        Status = "Pending",
-                        Result = ""
-                    };
-                    taskQueue.Add(task);
+                DataGridViewRow row = dataGridView1.Rows[i];
+                string fileName = row.Cells[ArtifactColumns.FileName].Value?.ToString();
 
-                    var item = new ListViewItem(
-                        new[]
-                        {
-                            task.Id.ToString(),
-                            task.FileName,
-                            task.Status,
-                            task.Result
-                        })
-                    {
-                        Tag = task
-                    };
-                    listViewTasks.Items.Add(item);
-                }
+                bool isMatch = pkMasterInfo.ParquetFiles.Keys
+                    .Any(k => k.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+
+                row.DefaultCellStyle.BackColor = isMatch ?
+                    Color.FromArgb(240, 255, 240) :
+                    Color.FromArgb(245, 200, 200);
+
+                row.Cells[ArtifactColumns.Select].Value = isMatch;
             }
-
-            progressBarOverall.Maximum = taskQueue.Count;
-            progressBarOverall.Value = tasksCompleted;
         }
 
         private async void btnStart_Click(object sender, EventArgs e)
@@ -378,8 +112,7 @@ namespace LRParquetsDupChecker
             startToolStripMenuItem.Enabled = false;
             cancelToolStripMenuItem.Enabled = true;
             cts = new CancellationTokenSource();
-            tasksCompleted = 0;
-            progressBarOverall.Value = 0;
+            taskQueueManager.ResetProgress();
 
             try
             {
@@ -403,33 +136,33 @@ namespace LRParquetsDupChecker
 
         private async Task ProcessTaskQueueAsync(CancellationToken token)
         {
-            int maxDegreeOfParallelism = 2; // Adjust as needed
+            int maxDegreeOfParallelism = 2;
             var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
             var tasks = new List<Task>();
 
-            foreach (var task in taskQueue.Where(t => t.Status == "Pending"))
+            foreach (var task in taskQueueManager.GetPendingTasks())
             {
                 await semaphore.WaitAsync(token);
                 tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        UpdateTaskStatus(task, "Processing", "");
+                        taskQueueManager.UpdateTaskStatus(task, "Processing", "");
                         string result = await PerformBusinessLogicAsync(task.FullPath, token);
-                        UpdateTaskStatus(task, "Completed", result);
+                        taskQueueManager.UpdateTaskStatus(task, "Completed", result);
                     }
                     catch (OperationCanceledException)
                     {
-                        UpdateTaskStatus(task, "Canceled", "");
+                        taskQueueManager.UpdateTaskStatus(task, "Canceled", "");
                     }
                     catch (Exception ex)
                     {
-                        UpdateTaskStatus(task, "Failed", ex.Message);
+                        taskQueueManager.UpdateTaskStatus(task, "Failed", ex.Message);
                     }
                     finally
                     {
                         semaphore.Release();
-                        UpdateProgressBar();
+                        taskQueueManager.UpdateProgress();
                     }
                 }, token));
             }
@@ -437,95 +170,204 @@ namespace LRParquetsDupChecker
             await Task.WhenAll(tasks);
         }
 
-        private void UpdateTaskStatus(FileProcessingTask task, string status, string result)
+        private async Task<string> PerformBusinessLogicAsync(string filePath, CancellationToken token)
+        {
+            try
+            {
+                string fileName = Path.GetFileName(filePath);
+
+                // Update options for the file type
+                UpdateOptionsForFile(options, fileName);
+
+                // Get file configuration from master info (case-insensitive match)
+                var fileConfig = pkMasterInfo?.ParquetFiles
+                    .FirstOrDefault(kv => kv.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                    .Value;
+
+                if (fileConfig == null)
+                {
+                    return "No config found in Data Dictionary";
+                }
+
+                // Read the file and perform validations
+                List<string> validationResults = new List<string>();
+
+                // Read columns from the file
+                List<string> fileColumns;
+                if (options.IsCsv)
+                {
+                    fileColumns = await CsvOperations.GetCSVColumns(options);
+                }
+                else
+                {
+                    fileColumns = await ParquetOperations.GetParquetColumns(options);
+                }
+
+                if (fileColumns == null || !fileColumns.Any())
+                {
+                    return "Failed to read columns from file";
+                }
+
+                // 1. Validate column names exist in file
+                bool allColumnsExist = ValidateColumnExistence(fileColumns, fileConfig);
+                validationResults.Add($"Columns Exist: {(allColumnsExist ? "✓" : "✗")}");
+
+                // 2. Validate column sequence
+                bool columnSequenceMatch = ValidateColumnSequence(fileColumns, fileConfig);
+                validationResults.Add($"Sequence: {(columnSequenceMatch ? "✓" : "✗")}");
+
+                // 3. Get primary key columns
+                List<string> primaryKeyColumns = fileConfig.Columns?
+                    .Where(c => c.IsPrimaryKey)
+                    .Select(c => c.Name)
+                    .ToList() ?? new List<string>();
+
+                if (primaryKeyColumns.Any())
+                {
+                    // 4. Perform duplicate and null checks on PK columns
+                    var dataQualityResults = await PerformDataQualityChecksAsync(filePath, primaryKeyColumns, token);
+                    validationResults.Add($"Duplicates: {dataQualityResults.DuplicatesFound}");
+                    validationResults.Add($"Nulls: {dataQualityResults.NullsFound}");
+
+                    // Update DataGridView with results
+                    UpdateDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch,
+                                     dataQualityResults.DuplicatesFound, dataQualityResults.NullsFound);
+                }
+                else
+                {
+                    validationResults.Add("No PK columns defined");
+                    UpdateDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch, 0, 0);
+                }
+
+                return string.Join(" | ", validationResults);
+            }
+            catch (Exception ex)
+            {
+                return $"Error: {ex.Message}";
+            }
+        }
+
+        private void UpdateOptionsForFile(Options options, string fileName)
+        {
+            if (fileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase))
+            {
+                options.IsCsv = true;
+                options.Delimiter = options.Delimiter != '\0' ? options.Delimiter : ',';
+                options.HasHeader = true;
+            }
+            else if (fileName.EndsWith(".parquet", StringComparison.OrdinalIgnoreCase) ||
+                     fileName.EndsWith(".parquet.gz", StringComparison.OrdinalIgnoreCase))
+            {
+                options.IsCsv = false;
+            }
+        }
+
+        private bool ValidateColumnExistence(List<string> fileColumns, ParquetFileConfig fileConfig)
+        {
+            var expectedColumns = fileConfig.Columns?.Select(c => c.Name).ToList() ?? new List<string>();
+
+            return expectedColumns.All(expected =>
+                fileColumns.Any(actual =>
+                    actual.Equals(expected, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private bool ValidateColumnSequence(List<string> fileColumns, ParquetFileConfig fileConfig)
+        {
+            var expectedColumns = fileConfig.Columns?.Select(c => c.Name).ToList() ?? new List<string>();
+
+            // Check if columns are in the same order (case-insensitive)
+            for (int i = 0; i < Math.Min(expectedColumns.Count, fileColumns.Count); i++)
+            {
+                if (!fileColumns[i].Equals(expectedColumns[i], StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private async Task<DataQualityResults> PerformDataQualityChecksAsync(string filePath, List<string> primaryKeyColumns, CancellationToken token)
+        {
+            var results = new DataQualityResults();
+
+            if (!primaryKeyColumns.Any())
+                return results;
+
+            // Load data for quality checks
+            DataTable dataTable;
+            if (options.IsCsv)
+            {
+                dataTable = await Task.Run(() => CsvOperations.LoadCsv(options, primaryKeyColumns));
+            }
+            else
+            {
+                dataTable = await Task.Run(() => ParquetOperations.LoadParquet(options, primaryKeyColumns));
+            }
+
+            // Check for duplicates
+            results.DuplicatesFound = CheckForDuplicates(dataTable, primaryKeyColumns);
+
+            // Check for nulls in PK columns
+            results.NullsFound = CheckForNulls(dataTable, primaryKeyColumns);
+
+            return results;
+        }
+
+        private int CheckForDuplicates(DataTable data, List<string> pkColumns)
+        {
+            if (pkColumns.Count == 0) return 0;
+
+            var duplicateGroups = data.AsEnumerable()
+                .GroupBy(row => CreateCompositeKey(row, pkColumns))
+                .Where(g => g.Count() > 1);
+
+            return duplicateGroups.Sum(g => g.Count() - 1); // Count duplicates (excluding first occurrence)
+        }
+
+        private int CheckForNulls(DataTable data, List<string> pkColumns)
+        {
+            return data.AsEnumerable()
+                .Count(row => pkColumns.Any(col => row[col] == null || row[col] == DBNull.Value));
+        }
+
+        private string CreateCompositeKey(DataRow row, List<string> columns)
+        {
+            var keyBuilder = new StringBuilder();
+            foreach (var column in columns)
+            {
+                keyBuilder.Append(row[column]?.ToString() ?? "NULL").Append("|");
+            }
+            return keyBuilder.ToString();
+        }
+
+        private void UpdateDataGridRow(string fileName, bool schemaMatch, bool columnNamesMatch, bool columnSequenceMatch, int duplicatesFound, int nullsFound)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action(() => UpdateTaskStatus(task, status, result)));
+                Invoke(new Action<string, bool, bool, bool, int, int>(
+                    UpdateDataGridRow), fileName, schemaMatch, columnNamesMatch, columnSequenceMatch, duplicatesFound, nullsFound);
                 return;
             }
-            task.Status = status;
-            task.Result = result;
-            foreach (ListViewItem item in listViewTasks.Items)
+
+            // Find the row with matching filename
+            foreach (DataGridViewRow row in dataGridView1.Rows)
             {
-                if (item.Tag == task)
+                if (row.IsNewRow) continue;
+
+                var rowFileName = row.Cells[ArtifactColumns.FileName].Value?.ToString();
+                if (rowFileName != null && rowFileName.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                 {
-                    item.SubItems[2].Text = status;
-                    item.SubItems[3].Text = result;
+                    row.Cells[ArtifactColumns.SchemaMatch].Value = schemaMatch;
+                    row.Cells[ArtifactColumns.ColumnNamesMatch].Value = columnNamesMatch;
+                    row.Cells[ArtifactColumns.ColumnSequenceMatch].Value = columnSequenceMatch;
+                    row.Cells[ArtifactColumns.DuplicateCheckDone].Value = true;
+                    row.Cells[ArtifactColumns.DuplicatesFound].Value = duplicatesFound;
+                    row.Cells[ArtifactColumns.NullsFound].Value = nullsFound;
+                    row.Cells[ArtifactColumns.Status].Value = "Completed";
                     break;
                 }
             }
         }
 
-        private void UpdateProgressBar()
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action(UpdateProgressBar));
-                return;
-            }
-            tasksCompleted++;
-            if (tasksCompleted <= progressBarOverall.Maximum) progressBarOverall.Value = tasksCompleted;
-        }
-
-        // Simulated async business logic (replace with your real logic)
-        private async Task<string> PerformBusinessLogicAsync(string filePath, CancellationToken token)
-        {
-            await Task.Delay(250, token); // Simulate work
-            // Simulate random failure
-            if (new Random().Next(0, 10) < 2)
-                throw new Exception("Random failure occurred.");
-            return System.IO.File.Exists(filePath) ? "Processed" : "File Not Found";
-        }
-
-        private void addToQueueToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            //await ProcessSelectedArtifactsAsync(2);
-            AddSelectedArtifactsToQueue();
-            //MessageBox.Show("Selected files added to the task queue.");
-            toolStripStatusLabel1.Text = "Selected files added to the task queue.";
-        }
-    }
-
-    public class ColumnMetadata
-    {
-        public string Name { get; set; }
-        public Type DataType { get; set; }
-        public string DisplayName { get; set; }
-        public bool IsEditable { get; set; }
-        public bool Visible { get; set; }
-
-        public ColumnMetadata(string name, Type dataType, string displayName, bool isEditable, bool visible = true)
-        {
-            Name = name;
-            DataType = dataType;
-            DisplayName = displayName;
-            IsEditable = isEditable;
-            Visible = visible;
-        }
-    }
-
-    public static class ArtifactColumns
-    {
-        public const string SRNO = "SRNo";
-        public const string FileName = "FileName";
-        public const string FullPath = "FullPath";
-        public const string Select = "Select";
-        public const string SchemaMatch = "SchemaMatch";
-        public const string ColumnNamesMatch = "ColumnNamesMatch";
-        public const string ColumnSequenceMatch = "ColumnSequenceMatch";
-        public const string DuplicateCheckDone = "DuplicateCheckDone";
-        public const string DuplicatesFound = "DuplicatesFound";
-        public const string NullsFound = "NullsFound";
-        public const string Status = "Status";
-    }
-
-    public class FileProcessingTask
-    {
-        public int Id { get; set; }
-        public string FileName { get; set; }
-        public string FullPath { get; set; }
-        public string Status { get; set; }
-        public string Result { get; set; }
     }
 }

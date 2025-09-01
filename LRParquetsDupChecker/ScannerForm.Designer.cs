@@ -83,9 +83,8 @@
             // openParquetToolStripMenuItem
             // 
             openParquetToolStripMenuItem.Name = "openParquetToolStripMenuItem";
-            openParquetToolStripMenuItem.Size = new Size(175, 26);
+            openParquetToolStripMenuItem.Size = new Size(180, 26);
             openParquetToolStripMenuItem.Text = "Open Parquet";
-            openParquetToolStripMenuItem.Click += openParquetToolStripMenuItem_Click;
             // 
             // selectAllToolStripMenuItem
             // 

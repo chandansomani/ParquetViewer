@@ -531,7 +531,7 @@ namespace LRParquetsDupChecker
         {
             try
             {
-                var parquetEngine = await ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None);
+                var parquetEngine = await ParquetEngine.OpenFileAsync(options.FilePath, CancellationToken.None);
                 return parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
             }
             catch (Exception ex)

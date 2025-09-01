@@ -7,3 +7,9 @@
 /LRParquetsDupChecker/obj
 /ParquetViewer.Engine/bin
 /ParquetViewer.Engine/obj
+/src/.vs/
+/src/ParquetDuplicateFinder/bin
+/src/ParquetDuplicateFinder/obj
+/src/ParquetViewer.Engine/bin
+/src/ParquetViewer.Engine/obj
+

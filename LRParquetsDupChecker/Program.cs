@@ -15,6 +15,7 @@ namespace LRParquetsDupChecker
             ApplicationConfiguration.Initialize();
             //Application.Run(new MainForm());
             Application.Run(new ScannerForm());
+            //Application.Run(new ScannerFormNew());
             //Application.Run(new TaskQueueForm());
         }
         public static void Log(string message, bool newLine = true)
