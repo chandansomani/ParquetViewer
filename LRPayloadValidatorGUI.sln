@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.12.35527.113
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LRParquetsDupChecker", "LRParquetsDupChecker\LRParquetsDupChecker.csproj", "{EC9A9603-EDFD-466F-AF2A-95FEB536C79D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LRPayloadValidatorGUI", "LRParquetsDupChecker\LRPayloadValidatorGUI.csproj", "{EC9A9603-EDFD-466F-AF2A-95FEB536C79D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParquetViewer.Engine", "ParquetViewer.Engine\ParquetViewer.Engine.csproj", "{2C71098A-A33E-47DB-A8B8-B8DBC48D8365}"
 EndProject

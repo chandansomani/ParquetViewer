@@ -1,13 +1,3 @@
-using ExcelDataReader;
-using ParquetViewer.Engine;
-using System.Data;
-using System.Formats.Asn1;
-using System.Globalization;
-using System.IO.Compression;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
-using DocumentFormat.OpenXml;
-
 namespace LRParquetsDupChecker
 {
     internal static class Program
@@ -23,8 +13,9 @@ namespace LRParquetsDupChecker
             // To customize application configuration such as set high DPI settings or default font,
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
-            Application.Run(new MainForm());
+            //Application.Run(new MainForm());
             Application.Run(new ScannerForm());
+            //Application.Run(new TaskQueueForm());
         }
         public static void Log(string message, bool newLine = true)
         {

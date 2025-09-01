@@ -30,16 +30,22 @@
         {
             menuStrip1 = new MenuStrip();
             openFolderToolStripMenuItem = new ToolStripMenuItem();
+            featuresToolStripMenuItem = new ToolStripMenuItem();
+            openParquetToolStripMenuItem = new ToolStripMenuItem();
+            selectAllToolStripMenuItem = new ToolStripMenuItem();
+            deSelectAllToolStripMenuItem = new ToolStripMenuItem();
+            loadDataDictionaryToolStripMenuItem = new ToolStripMenuItem();
+            verifyFilesWithDDToolStripMenuItem = new ToolStripMenuItem();
+            addToQueueToolStripMenuItem = new ToolStripMenuItem();
+            startToolStripMenuItem = new ToolStripMenuItem();
+            cancelToolStripMenuItem = new ToolStripMenuItem();
             splitContainer1 = new SplitContainer();
-            button6 = new Button();
-            button5 = new Button();
-            button4 = new Button();
-            button3 = new Button();
-            button2 = new Button();
-            button1 = new Button();
+            listViewTasks = new ListView();
             dataGridView1 = new DataGridView();
             statusStrip1 = new StatusStrip();
             toolStripStatusLabel1 = new ToolStripStatusLabel();
+            toolStripStatusLabel2 = new ToolStripStatusLabel();
+            progressBarOverall = new ToolStripProgressBar();
             menuStrip1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)splitContainer1).BeginInit();
             splitContainer1.Panel1.SuspendLayout();
@@ -51,110 +57,116 @@
             // 
             // menuStrip1
             // 
-            menuStrip1.Items.AddRange(new ToolStripItem[] { openFolderToolStripMenuItem });
+            menuStrip1.Font = new Font("Segoe UI", 12F);
+            menuStrip1.Items.AddRange(new ToolStripItem[] { openFolderToolStripMenuItem, featuresToolStripMenuItem, selectAllToolStripMenuItem, deSelectAllToolStripMenuItem, loadDataDictionaryToolStripMenuItem, verifyFilesWithDDToolStripMenuItem, addToQueueToolStripMenuItem, startToolStripMenuItem, cancelToolStripMenuItem });
             menuStrip1.Location = new Point(0, 0);
             menuStrip1.Name = "menuStrip1";
             menuStrip1.Padding = new Padding(8, 3, 0, 3);
-            menuStrip1.Size = new Size(1331, 25);
+            menuStrip1.Size = new Size(1331, 31);
             menuStrip1.TabIndex = 0;
             menuStrip1.Text = "menuStrip1";
             // 
             // openFolderToolStripMenuItem
             // 
             openFolderToolStripMenuItem.Name = "openFolderToolStripMenuItem";
-            openFolderToolStripMenuItem.Size = new Size(84, 19);
+            openFolderToolStripMenuItem.Size = new Size(108, 25);
             openFolderToolStripMenuItem.Text = "Open Folder";
             openFolderToolStripMenuItem.Click += openFolderToolStripMenuItem_Click;
+            // 
+            // featuresToolStripMenuItem
+            // 
+            featuresToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { openParquetToolStripMenuItem });
+            featuresToolStripMenuItem.Name = "featuresToolStripMenuItem";
+            featuresToolStripMenuItem.Size = new Size(81, 25);
+            featuresToolStripMenuItem.Text = "Features";
+            // 
+            // openParquetToolStripMenuItem
+            // 
+            openParquetToolStripMenuItem.Name = "openParquetToolStripMenuItem";
+            openParquetToolStripMenuItem.Size = new Size(175, 26);
+            openParquetToolStripMenuItem.Text = "Open Parquet";
+            openParquetToolStripMenuItem.Click += openParquetToolStripMenuItem_Click;
+            // 
+            // selectAllToolStripMenuItem
+            // 
+            selectAllToolStripMenuItem.Name = "selectAllToolStripMenuItem";
+            selectAllToolStripMenuItem.Size = new Size(85, 25);
+            selectAllToolStripMenuItem.Text = "Select All";
+            selectAllToolStripMenuItem.Click += selectAllToolStripMenuItem_Click;
+            // 
+            // deSelectAllToolStripMenuItem
+            // 
+            deSelectAllToolStripMenuItem.Name = "deSelectAllToolStripMenuItem";
+            deSelectAllToolStripMenuItem.Size = new Size(104, 25);
+            deSelectAllToolStripMenuItem.Text = "DeSelect All";
+            deSelectAllToolStripMenuItem.Click += deSelectAllToolStripMenuItem_Click;
+            // 
+            // loadDataDictionaryToolStripMenuItem
+            // 
+            loadDataDictionaryToolStripMenuItem.Name = "loadDataDictionaryToolStripMenuItem";
+            loadDataDictionaryToolStripMenuItem.Size = new Size(167, 25);
+            loadDataDictionaryToolStripMenuItem.Text = "Load Data Dictionary";
+            loadDataDictionaryToolStripMenuItem.Click += loadDataDictionaryToolStripMenuItem_Click;
+            // 
+            // verifyFilesWithDDToolStripMenuItem
+            // 
+            verifyFilesWithDDToolStripMenuItem.Name = "verifyFilesWithDDToolStripMenuItem";
+            verifyFilesWithDDToolStripMenuItem.Size = new Size(157, 25);
+            verifyFilesWithDDToolStripMenuItem.Text = "Verify Files with DD";
+            verifyFilesWithDDToolStripMenuItem.Click += verifyFilesWithDDToolStripMenuItem_Click;
+            // 
+            // addToQueueToolStripMenuItem
+            // 
+            addToQueueToolStripMenuItem.Name = "addToQueueToolStripMenuItem";
+            addToQueueToolStripMenuItem.Size = new Size(119, 25);
+            addToQueueToolStripMenuItem.Text = "Add To Queue";
+            addToQueueToolStripMenuItem.Click += addToQueueToolStripMenuItem_Click;
+            // 
+            // startToolStripMenuItem
+            // 
+            startToolStripMenuItem.Name = "startToolStripMenuItem";
+            startToolStripMenuItem.Size = new Size(54, 25);
+            startToolStripMenuItem.Text = "Start";
+            startToolStripMenuItem.Click += btnStart_Click;
+            // 
+            // cancelToolStripMenuItem
+            // 
+            cancelToolStripMenuItem.Name = "cancelToolStripMenuItem";
+            cancelToolStripMenuItem.Size = new Size(68, 25);
+            cancelToolStripMenuItem.Text = "Cancel";
+            cancelToolStripMenuItem.Click += btnCancel_Click;
             // 
             // splitContainer1
             // 
             splitContainer1.Dock = DockStyle.Fill;
             splitContainer1.FixedPanel = FixedPanel.Panel1;
-            splitContainer1.Location = new Point(0, 25);
+            splitContainer1.Location = new Point(0, 31);
             splitContainer1.Margin = new Padding(4);
             splitContainer1.Name = "splitContainer1";
+            splitContainer1.Orientation = Orientation.Horizontal;
             // 
             // splitContainer1.Panel1
             // 
-            splitContainer1.Panel1.Controls.Add(button6);
-            splitContainer1.Panel1.Controls.Add(button5);
-            splitContainer1.Panel1.Controls.Add(button4);
-            splitContainer1.Panel1.Controls.Add(button3);
-            splitContainer1.Panel1.Controls.Add(button2);
-            splitContainer1.Panel1.Controls.Add(button1);
+            splitContainer1.Panel1.Controls.Add(listViewTasks);
+            splitContainer1.Panel1.Padding = new Padding(6);
             // 
             // splitContainer1.Panel2
             // 
             splitContainer1.Panel2.Controls.Add(dataGridView1);
-            splitContainer1.Panel2.Padding = new Padding(6, 7, 6, 7);
-            splitContainer1.Size = new Size(1331, 657);
-            splitContainer1.SplitterDistance = 147;
+            splitContainer1.Panel2.Padding = new Padding(6);
+            splitContainer1.Size = new Size(1331, 651);
+            splitContainer1.SplitterDistance = 300;
             splitContainer1.SplitterWidth = 5;
             splitContainer1.TabIndex = 1;
             // 
-            // button6
+            // listViewTasks
             // 
-            button6.Location = new Point(13, 373);
-            button6.Margin = new Padding(4);
-            button6.Name = "button6";
-            button6.Size = new Size(122, 60);
-            button6.TabIndex = 0;
-            button6.Text = "Check for Duplicates";
-            button6.UseVisualStyleBackColor = true;
-            // 
-            // button5
-            // 
-            button5.Location = new Point(13, 305);
-            button5.Margin = new Padding(4);
-            button5.Name = "button5";
-            button5.Size = new Size(122, 60);
-            button5.TabIndex = 0;
-            button5.Text = "Sync Columns ";
-            button5.UseVisualStyleBackColor = true;
-            // 
-            // button4
-            // 
-            button4.Location = new Point(13, 212);
-            button4.Margin = new Padding(4);
-            button4.Name = "button4";
-            button4.Size = new Size(122, 84);
-            button4.TabIndex = 0;
-            button4.Text = "Verify File Names with DD";
-            button4.UseVisualStyleBackColor = true;
-            button4.Click += button4_Click;
-            // 
-            // button3
-            // 
-            button3.Location = new Point(13, 144);
-            button3.Margin = new Padding(4);
-            button3.Name = "button3";
-            button3.Size = new Size(122, 60);
-            button3.TabIndex = 0;
-            button3.Text = "Load Data Dictionary";
-            button3.UseVisualStyleBackColor = true;
-            button3.Click += button3_Click;
-            // 
-            // button2
-            // 
-            button2.Location = new Point(13, 75);
-            button2.Margin = new Padding(4);
-            button2.Name = "button2";
-            button2.Size = new Size(122, 60);
-            button2.TabIndex = 0;
-            button2.Text = "DeSelect All";
-            button2.UseVisualStyleBackColor = true;
-            button2.Click += button2_Click;
-            // 
-            // button1
-            // 
-            button1.Location = new Point(13, 7);
-            button1.Margin = new Padding(4);
-            button1.Name = "button1";
-            button1.Size = new Size(122, 60);
-            button1.TabIndex = 0;
-            button1.Text = "Select All";
-            button1.UseVisualStyleBackColor = true;
-            button1.Click += button1_Click;
+            listViewTasks.Dock = DockStyle.Fill;
+            listViewTasks.Location = new Point(6, 6);
+            listViewTasks.Name = "listViewTasks";
+            listViewTasks.Size = new Size(1319, 288);
+            listViewTasks.TabIndex = 1;
+            listViewTasks.UseCompatibleStateImageBehavior = false;
             // 
             // dataGridView1
             // 
@@ -163,7 +175,7 @@
             dataGridView1.AllowUserToResizeRows = false;
             dataGridView1.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             dataGridView1.Dock = DockStyle.Fill;
-            dataGridView1.Location = new Point(6, 7);
+            dataGridView1.Location = new Point(6, 6);
             dataGridView1.Margin = new Padding(4);
             dataGridView1.MultiSelect = false;
             dataGridView1.Name = "dataGridView1";
@@ -171,12 +183,12 @@
             dataGridView1.RowTemplate.Height = 30;
             dataGridView1.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dataGridView1.ShowEditingIcon = false;
-            dataGridView1.Size = new Size(1167, 643);
+            dataGridView1.Size = new Size(1319, 334);
             dataGridView1.TabIndex = 0;
             // 
             // statusStrip1
             // 
-            statusStrip1.Items.AddRange(new ToolStripItem[] { toolStripStatusLabel1 });
+            statusStrip1.Items.AddRange(new ToolStripItem[] { toolStripStatusLabel1, toolStripStatusLabel2, progressBarOverall });
             statusStrip1.Location = new Point(0, 682);
             statusStrip1.Name = "statusStrip1";
             statusStrip1.Padding = new Padding(1, 0, 18, 0);
@@ -189,6 +201,17 @@
             toolStripStatusLabel1.Name = "toolStripStatusLabel1";
             toolStripStatusLabel1.Size = new Size(101, 17);
             toolStripStatusLabel1.Text = "Click Open Folder";
+            // 
+            // toolStripStatusLabel2
+            // 
+            toolStripStatusLabel2.Name = "toolStripStatusLabel2";
+            toolStripStatusLabel2.Size = new Size(909, 17);
+            toolStripStatusLabel2.Spring = true;
+            // 
+            // progressBarOverall
+            // 
+            progressBarOverall.Name = "progressBarOverall";
+            progressBarOverall.Size = new Size(300, 16);
             // 
             // ScannerForm
             // 
@@ -222,13 +245,19 @@
         private ToolStripMenuItem openFolderToolStripMenuItem;
         private SplitContainer splitContainer1;
         private DataGridView dataGridView1;
-        private Button button1;
-        private Button button2;
-        private Button button4;
-        private Button button3;
-        private Button button5;
-        private Button button6;
         private StatusStrip statusStrip1;
         private ToolStripStatusLabel toolStripStatusLabel1;
+        private ToolStripMenuItem featuresToolStripMenuItem;
+        private ToolStripMenuItem openParquetToolStripMenuItem;
+        private ToolStripMenuItem selectAllToolStripMenuItem;
+        private ToolStripMenuItem deSelectAllToolStripMenuItem;
+        private ToolStripMenuItem loadDataDictionaryToolStripMenuItem;
+        private ToolStripMenuItem verifyFilesWithDDToolStripMenuItem;
+        private ListView listViewTasks;
+        private ToolStripMenuItem startToolStripMenuItem;
+        private ToolStripMenuItem cancelToolStripMenuItem;
+        private ToolStripMenuItem addToQueueToolStripMenuItem;
+        private ToolStripStatusLabel toolStripStatusLabel2;
+        private ToolStripProgressBar progressBarOverall;
     }
 }
