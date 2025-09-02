@@ -1,4 +1,6 @@
-namespace LRParquetsDupChecker
+//using LRParquetsDupChecker;
+
+namespace LRPayloadValidatorGUI
 {
     public class TaskQueueManager
     {
@@ -118,14 +120,14 @@ namespace LRParquetsDupChecker
             }
         }
 
-        public void UpdateValidationStatus(FileProcessingTask task, bool status ,string result)
+        public void UpdateValidationStatus(FileProcessingTask task, bool status, string result)
         {
             if (_invokeControl.InvokeRequired)
             {
                 _invokeControl.Invoke(new Action<FileProcessingTask, bool, string>(UpdateValidationStatus), task, status, result);
                 return;
             }
-            
+
             task.ValidationCheck = status;
             task.Result = result;
 

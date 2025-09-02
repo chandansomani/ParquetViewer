@@ -1,4 +1,4 @@
-namespace LRParquetsDupChecker
+namespace LRPayloadValidatorGUI
 {
     internal static class Program
     {
@@ -27,8 +27,8 @@ namespace LRParquetsDupChecker
         {
             Directory.CreateDirectory(options.LogFolder);
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            logFilePath = Path.Combine(options.LogFolder, $"Run_{timestamp}.log");                        
+            logFilePath = Path.Combine(options.LogFolder, $"Run_{timestamp}.log");
             LogLineBreak();
         }
-    }    
+    }
 }

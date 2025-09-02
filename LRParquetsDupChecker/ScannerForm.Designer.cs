@@ -1,4 +1,4 @@
-﻿namespace LRParquetsDupChecker
+﻿namespace LRPayloadValidatorGUI
 {
     partial class ScannerForm
     {

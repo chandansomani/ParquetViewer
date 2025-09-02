@@ -1,4 +1,4 @@
-namespace LRParquetsDupChecker
+namespace LRPayloadValidatorGUI
 {
     public class FileProcessingTask
     {

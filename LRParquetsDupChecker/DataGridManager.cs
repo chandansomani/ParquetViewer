@@ -1,6 +1,6 @@
 using System.Data;
 
-namespace LRParquetsDupChecker
+namespace LRPayloadValidatorGUI
 {
     public class DataGridManager
     {
@@ -64,7 +64,7 @@ namespace LRParquetsDupChecker
         public void LoadFilesFromFolder(string folderPath)
         {
             _artifactTable.Rows.Clear();
-            
+
             var filesToProcess = Directory.EnumerateFiles(folderPath, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(f => f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
                            f.EndsWith(".csv.gz", StringComparison.OrdinalIgnoreCase) ||
@@ -99,11 +99,11 @@ namespace LRParquetsDupChecker
                 ArtifactColumns.Select => false,
                 ArtifactColumns.FileName => Path.GetFileName(filePath),
                 ArtifactColumns.FullPath => filePath,
-                ArtifactColumns.SchemaMatch or 
-                ArtifactColumns.ColumnNamesMatch or 
-                ArtifactColumns.ColumnSequenceMatch or 
+                ArtifactColumns.SchemaMatch or
+                ArtifactColumns.ColumnNamesMatch or
+                ArtifactColumns.ColumnSequenceMatch or
                 ArtifactColumns.DuplicateCheckDone => false,
-                ArtifactColumns.DuplicatesFound or 
+                ArtifactColumns.DuplicatesFound or
                 ArtifactColumns.NullsFound => 0,
                 ArtifactColumns.Status => "Pending",
                 _ => DBNull.Value
@@ -113,7 +113,7 @@ namespace LRParquetsDupChecker
         public List<string> GetSelectedFiles()
         {
             var selectedFiles = new List<string>();
-            
+
             foreach (DataRow row in _artifactTable.Rows)
             {
                 if (row[ArtifactColumns.Select] is bool isSelected && isSelected)
@@ -123,7 +123,7 @@ namespace LRParquetsDupChecker
                         selectedFiles.Add(filePath);
                 }
             }
-            
+
             return selectedFiles;
         }
 

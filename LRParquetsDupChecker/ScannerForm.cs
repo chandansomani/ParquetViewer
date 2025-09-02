@@ -1,8 +1,7 @@
-﻿using LRPayloadValidatorGUI;
-using System.Data;
+﻿using System.Data;
 using System.Text;
 
-namespace LRParquetsDupChecker
+namespace LRPayloadValidatorGUI
 {
     public partial class ScannerForm : Form
     {
@@ -230,40 +229,63 @@ namespace LRParquetsDupChecker
                 List<string> validationResults = new List<string>();
 
                 // Read columns from the file
-                List<string> fileColumns;
+                //List<string> fileColumns;
+                ParquetInfoResult parquetInfoResult = new ();                
                 if (options.IsCsv)
                 {
-                    fileColumns = await CsvOperations.GetCSVColumns(options);
+                    parquetInfoResult.Columns = await CsvOperations.GetCSVColumns(options);
                 }
                 else
                 {
                     var opt = new Options() { FilePath = filePath };
-                    fileColumns = await ParquetOperations.GetParquetColumns(opt);
-                }
-
-                if (fileColumns == null || !fileColumns.Any())
-                {
-                    return "Failed to read columns from file";
+                    //fileColumns = await ParquetOperations.GetParquetColumns(opt);
+                    parquetInfoResult = await ParquetOperations.GetParquetDetailsAsync(opt);
+                    if(parquetInfoResult == null)
+                    {
+                        return "Failed to read columns from file";
+                    }
+                    else
+                    {
+                        if (parquetInfoResult.Columns == null || !parquetInfoResult.Columns.Any())
+                        {
+                            return "Failed to read columns from file";
+                        }
+                    }
                 }
 
                 // 1. Validate column names exist in file
-                bool allColumnsExist = ValidateColumnExistence(fileColumns, fileConfig);
+                bool allColumnsExist = ValidateColumnExistence(parquetInfoResult.Columns, fileConfig);
                 validationResults.Add($"Columns Exist: {(allColumnsExist ? "✓" : "✗")}");
 
                 // 2. Validate column sequence
-                bool columnSequenceMatch = ValidateColumnSequence(fileColumns, fileConfig);
+                bool columnSequenceMatch = ValidateColumnSequence(parquetInfoResult.Columns, fileConfig);
                 validationResults.Add($"Sequence: {(columnSequenceMatch ? "✓" : "✗")}");
 
+
+                List<string> primaryKeyColumns = fileConfig.Columns?
+                    .Where(c => c.IsPrimaryKey)
+                    .Select(c => c.Name)
+                    .ToList() ?? new List<string>();
+
+                if (primaryKeyColumns.Any())
                 {
-                    var extraColumns = GetExtraColumns(fileColumns, fileConfig);
-                    var analysisResults = AnalyzeColumnDifferences(fileColumns, fileConfig);
-                    int matchedCount = fileColumns.Count - analysisResults.Count - extraColumns.Count;
+                    validationResults.Add($"PK columns Count {primaryKeyColumns.Count}");
+                }
+                else
+                {
+                    validationResults.Add("No PK columns defined");
+                }
+
+                {
+                    var extraColumns = GetExtraColumns(parquetInfoResult.Columns, fileConfig);
+                    var analysisResults = AnalyzeColumnDifferences(parquetInfoResult.Columns, fileConfig);
+                    int matchedCount = parquetInfoResult.Columns.Count - analysisResults.Count - extraColumns.Count;
                     int missingCount = analysisResults.Count;
                     int extraCount = extraColumns.Count;
 
                     string summary =
-                                $"• Matched: {matchedCount,2:D2} | " +
-                                $"• Missing: {missingCount,2:D2} | " +
+                                $"• Matched: {matchedCount,2:D2} " +
+                                $"• Missing: {missingCount,2:D2} " +
                                 $"• Extra  : {extraCount,2:D2} ";
                     validationResults.Add($"Columns {summary}");
 
@@ -280,7 +302,7 @@ namespace LRParquetsDupChecker
                     }
                 }
                 UpdateValidationDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch);
-                
+                validationResults.Add($"Records: {parquetInfoResult.RecordCount}");
                 return string.Join(" | ", validationResults);
             }
             catch (Exception ex)
