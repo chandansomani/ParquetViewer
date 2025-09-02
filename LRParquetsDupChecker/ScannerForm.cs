@@ -1,5 +1,4 @@
-﻿using LRPayloadValidatorGUI;
-using System.Data;
+﻿using System.Data;
 using System.Text;
 
 namespace LRParquetsDupChecker
@@ -15,10 +14,10 @@ namespace LRParquetsDupChecker
 
         public ScannerForm()
         {
+            options = new Options();
             InitializeComponent();
             InitializeManagers();
             LoadConfigFile();
-            options = new Options();
         }
 
         private void InitializeManagers()
@@ -87,26 +86,6 @@ namespace LRParquetsDupChecker
             toolStripStatusLabel1.Text = "Selected files added to the task queue.";
         }
 
-
-        // Business Logic
-        private void VerifyFilesWithDataDictionary()
-        {
-            for (int i = 0; i < dataGridView1.Rows.Count; i++)
-            {
-                DataGridViewRow row = dataGridView1.Rows[i];
-                string fileName = row.Cells[ArtifactColumns.FileName].Value?.ToString();
-
-                bool isMatch = pkMasterInfo.ParquetFiles.Keys
-                    .Any(k => k.Equals(fileName, StringComparison.OrdinalIgnoreCase));
-
-                row.DefaultCellStyle.BackColor = isMatch ?
-                    Color.FromArgb(240, 255, 240) :
-                    Color.FromArgb(245, 200, 200);
-
-                row.Cells[ArtifactColumns.Select].Value = isMatch;
-            }
-        }
-
         private async void btnStart_Click(object sender, EventArgs e)
         {
             startToolStripMenuItem.Enabled = false;
@@ -132,6 +111,25 @@ namespace LRParquetsDupChecker
         private void btnCancel_Click(object sender, EventArgs e)
         {
             cts?.Cancel();
+        }
+
+        // Business Logic
+        private void VerifyFilesWithDataDictionary()
+        {
+            for (int i = 0; i < dataGridView1.Rows.Count; i++)
+            {
+                DataGridViewRow row = dataGridView1.Rows[i];
+                string fileName = row.Cells[ArtifactColumns.FileName].Value?.ToString();
+
+                bool isMatch = pkMasterInfo.ParquetFiles.Keys
+                    .Any(k => k.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+
+                row.DefaultCellStyle.BackColor = isMatch ?
+                    Color.FromArgb(240, 255, 240) :
+                    Color.FromArgb(245, 200, 200);
+
+                row.Cells[ArtifactColumns.Select].Value = isMatch;
+            }
         }
 
         private async Task ProcessTaskQueueAsync(CancellationToken token)
@@ -200,7 +198,8 @@ namespace LRParquetsDupChecker
                 }
                 else
                 {
-                    fileColumns = await ParquetOperations.GetParquetColumns(options);
+                    var opt = new Options() { FilePath = filePath };
+                    fileColumns = await ParquetOperations.GetParquetColumns(opt);
                 }
 
                 if (fileColumns == null || !fileColumns.Any())
@@ -215,6 +214,32 @@ namespace LRParquetsDupChecker
                 // 2. Validate column sequence
                 bool columnSequenceMatch = ValidateColumnSequence(fileColumns, fileConfig);
                 validationResults.Add($"Sequence: {(columnSequenceMatch ? "✓" : "✗")}");
+
+                {
+                    var extraColumns = GetExtraColumns(fileColumns, fileConfig);
+                    var analysisResults = AnalyzeColumnDifferences(fileColumns, fileConfig);
+                    int matchedCount = fileColumns.Count - analysisResults.Count - extraColumns.Count;
+                    int missingCount = analysisResults.Count;
+                    int extraCount = extraColumns.Count;
+
+                    string summary =
+                                $"• Matched: {matchedCount,2:D2} | " +
+                                $"• Missing: {missingCount,2:D2} | " +
+                                $"• Extra  : {extraCount,2:D2} ";
+                    validationResults.Add($"Columns {summary}");
+
+                    foreach (var result in analysisResults)
+                    {
+                        validationResults.Add(
+                            $"Expected: '{result.Expected}', Closest Actual: '{result.ClosestActual ?? "N/A"}', " +
+                            $"Type: {result.DifferenceType}, Levenshtein: {result.LevenshteinDistance}");
+                    }
+
+                    if (extraColumns.Any())
+                    {
+                        validationResults.Add($"Extra Columns: {string.Join(", ", extraColumns)}");
+                    }
+                }
 
                 // 3. Get primary key columns
                 List<string> primaryKeyColumns = fileConfig.Columns?
@@ -247,6 +272,93 @@ namespace LRParquetsDupChecker
             }
         }
 
+        public static List<string> GetExtraColumns(List<string> fileColumns, ParquetFileConfig fileConfig)
+        {
+            var expectedColumns = fileConfig.Columns?.Select(c => c.Name).ToList() ?? new List<string>();
+            return fileColumns.Where(actual =>
+                !expectedColumns.Any(expected => actual.Equals(expected, StringComparison.Ordinal))
+            ).ToList();
+        }
+
+        public static List<ColumnAnalysisResult> AnalyzeColumnDifferences(List<string> fileColumns, ParquetFileConfig fileConfig)
+        {
+            var expectedColumns = fileConfig.Columns?.Select(c => c.Name).ToList() ?? new List<string>();
+            var results = new List<ColumnAnalysisResult>();
+
+            foreach (var expected in expectedColumns)
+            {
+                if (fileColumns.Any(actual => actual.Equals(expected, StringComparison.Ordinal)))
+                    continue; // Exact match found
+
+                // Find closest actual column
+                string closest = null;
+                int minDistance = int.MaxValue;
+                foreach (var actual in fileColumns)
+                {
+                    int distance = LevenshteinDistance(expected, actual);
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closest = actual;
+                    }
+                }
+
+                string diffType = "Missing";
+                if (closest != null)
+                {
+                    if (expected.Equals(closest, StringComparison.OrdinalIgnoreCase))
+                        diffType = "Case difference";
+                    else if (expected.Trim().Equals(closest.Trim(), StringComparison.Ordinal))
+                        diffType = "Whitespace difference";
+                    else if (minDistance <= 2)
+                        diffType = $"Possible typo (distance {minDistance})";
+                    else
+                        diffType = $"Different (distance {minDistance})";
+                }
+
+                results.Add(new ColumnAnalysisResult
+                {
+                    Expected = expected,
+                    ClosestActual = closest,
+                    DifferenceType = diffType,
+                    LevenshteinDistance = minDistance
+                });
+            }
+
+            return results;
+        }
+
+        public class ColumnAnalysisResult
+        {
+            public string Expected { get; set; }
+            public string ClosestActual { get; set; }
+            public string DifferenceType { get; set; }
+            public int LevenshteinDistance { get; set; }
+        }
+        public static int LevenshteinDistance(string s, string t)
+        {
+            if (string.IsNullOrEmpty(s)) return t?.Length ?? 0;
+            if (string.IsNullOrEmpty(t)) return s.Length;
+
+            var d = new int[s.Length + 1, t.Length + 1];
+
+            for (int i = 0; i <= s.Length; i++) d[i, 0] = i;
+            for (int j = 0; j <= t.Length; j++) d[0, j] = j;
+
+            for (int i = 1; i <= s.Length; i++)
+            {
+                for (int j = 1; j <= t.Length; j++)
+                {
+                    int cost = (s[i - 1] == t[j - 1]) ? 0 : 1;
+                    d[i, j] = Math.Min(
+                        Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+                        d[i - 1, j - 1] + cost
+                    );
+                }
+            }
+            return d[s.Length, t.Length];
+        }
+
         private void UpdateOptionsForFile(Options options, string fileName)
         {
             if (fileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ||
@@ -269,7 +381,7 @@ namespace LRParquetsDupChecker
 
             return expectedColumns.All(expected =>
                 fileColumns.Any(actual =>
-                    actual.Equals(expected, StringComparison.OrdinalIgnoreCase)));
+                    actual.Equals(expected, StringComparison.Ordinal)));
         }
 
         private bool ValidateColumnSequence(List<string> fileColumns, ParquetFileConfig fileConfig)
@@ -292,16 +404,16 @@ namespace LRParquetsDupChecker
 
             if (!primaryKeyColumns.Any())
                 return results;
-
+            var opt = new Options() { FilePath = filePath };
             // Load data for quality checks
             DataTable dataTable;
             if (options.IsCsv)
             {
-                dataTable = await Task.Run(() => CsvOperations.LoadCsv(options, primaryKeyColumns));
+                dataTable = await Task.Run(() => CsvOperations.LoadCsv(opt, primaryKeyColumns));
             }
             else
             {
-                dataTable = await Task.Run(() => ParquetOperations.LoadParquet(options, primaryKeyColumns));
+                dataTable = await Task.Run(() => ParquetOperations.LoadParquet(opt, primaryKeyColumns));
             }
 
             // Check for duplicates

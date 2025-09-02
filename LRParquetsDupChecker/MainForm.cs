@@ -488,7 +488,7 @@ namespace LRParquetsDupChecker
     {
         public static async Task<DataTable> LoadParquet(Options options, List<string> columnsToUse)
         {
-            var parquetEngine = await ParquetEngine.OpenFileOrFolderAsync(options.FilePath, CancellationToken.None);
+            var parquetEngine = await ParquetEngine.OpenFileAsync(options.FilePath, CancellationToken.None);
             var availableFields = parquetEngine.Schema.Fields.Select(f => f.Name).ToList();
 
             List<string> fieldsToLoad;
@@ -515,16 +515,16 @@ namespace LRParquetsDupChecker
 
             if (options.Verbose) Console.WriteLine($"Loading Parquet fields: {string.Join(", ", fieldsToLoad)}");
 
-            var loadResult = await parquetEngine.ReadRowsAsync(
+                var loadResult = await parquetEngine.ReadRowsAsync(
                 fieldsToLoad,
                 0,
                 (int)parquetEngine.RecordCount,
                 CancellationToken.None,
                 null);
 
-            var dataTable = loadResult.Invoke(false);
-            if (options.Verbose) Console.WriteLine($"Loaded {dataTable.Rows.Count} rows from Parquet.");
-            return dataTable;
+                var dataTable = loadResult.Invoke(false);
+                if (options.Verbose) Console.WriteLine($"Loaded {dataTable.Rows.Count} rows from Parquet.");
+                return dataTable;
         }
                 
         public static async Task<List<string>> GetParquetColumns(Options options)

@@ -30,7 +30,7 @@ namespace LRParquetsDupChecker
             _listView.Columns.Add("ID", 50);
             _listView.Columns.Add("File Name", 200);
             _listView.Columns.Add("Status", 100);
-            _listView.Columns.Add("Result", 200);
+            _listView.Columns.Add("Result", 600);
 
             _progressBar.Minimum = 0;
             _progressBar.Value = 0;
@@ -57,7 +57,8 @@ namespace LRParquetsDupChecker
                 }
             }
 
-            _progressBar.Maximum = _taskQueue.Count;
+            _progressBar.Maximum = _taskQueue.Count(t => t.Status == "Pending");
+            _progressBar.Value = 0;
         }
 
         private FileProcessingTask CreateTask(int id, string filePath)
