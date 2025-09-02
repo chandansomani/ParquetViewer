@@ -30,6 +30,7 @@ namespace LRParquetsDupChecker
             _listView.Columns.Add("ID", 50);
             _listView.Columns.Add("File Name", 200);
             _listView.Columns.Add("Status", 100);
+            _listView.Columns.Add("Validation Result", 600);
             _listView.Columns.Add("Result", 600);
 
             _progressBar.Minimum = 0;
@@ -86,6 +87,7 @@ namespace LRParquetsDupChecker
                 task.Id.ToString(),
                 task.FileName,
                 task.Status,
+                task.ValidationStatus,
                 task.Result
             })
             {
@@ -110,6 +112,27 @@ namespace LRParquetsDupChecker
                 if (item.Tag == task)
                 {
                     item.SubItems[2].Text = status;
+                    item.SubItems[4].Text = result;
+                    break;
+                }
+            }
+        }
+
+        public void UpdateValidationStatus(FileProcessingTask task, bool status ,string result)
+        {
+            if (_invokeControl.InvokeRequired)
+            {
+                _invokeControl.Invoke(new Action<FileProcessingTask, bool, string>(UpdateValidationStatus), task, status, result);
+                return;
+            }
+            
+            task.ValidationCheck = status;
+            task.Result = result;
+
+            foreach (ListViewItem item in _listView.Items)
+            {
+                if (item.Tag == task)
+                {
                     item.SubItems[3].Text = result;
                     break;
                 }
@@ -144,6 +167,10 @@ namespace LRParquetsDupChecker
         public IEnumerable<FileProcessingTask> GetPendingTasks()
         {
             return _taskQueue.Where(t => t.Status == "Pending");
+        }
+        public IEnumerable<FileProcessingTask> GetValidationPendingTasks()
+        {
+            return _taskQueue.Where(t => t.ValidationCheck == false);
         }
     }
 }

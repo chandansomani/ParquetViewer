@@ -1,4 +1,5 @@
-﻿using System.Data;
+﻿using LRPayloadValidatorGUI;
+using System.Data;
 using System.Text;
 
 namespace LRParquetsDupChecker
@@ -114,8 +115,9 @@ namespace LRParquetsDupChecker
         }
 
         // Business Logic
-        private void VerifyFilesWithDataDictionary()
+        private async void VerifyFilesWithDataDictionary()
         {
+            cts = new CancellationTokenSource();
             for (int i = 0; i < dataGridView1.Rows.Count; i++)
             {
                 DataGridViewRow row = dataGridView1.Rows[i];
@@ -130,6 +132,7 @@ namespace LRParquetsDupChecker
 
                 row.Cells[ArtifactColumns.Select].Value = isMatch;
             }
+            await Task.Run(async () => await ProcessValidationAsync(cts.Token));
         }
 
         private async Task ProcessTaskQueueAsync(CancellationToken token)
@@ -168,7 +171,43 @@ namespace LRParquetsDupChecker
             await Task.WhenAll(tasks);
         }
 
-        private async Task<string> PerformBusinessLogicAsync(string filePath, CancellationToken token)
+        private async Task ProcessValidationAsync(CancellationToken token)
+        {
+            int maxDegreeOfParallelism = 2;
+            var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+            var tasks = new List<Task>();
+
+            foreach (var task in taskQueueManager.GetValidationPendingTasks())
+            {
+                await semaphore.WaitAsync(token);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        taskQueueManager.UpdateValidationStatus(task, false, "");
+                        string result = await PerformValidationAsync(task.FullPath, token);
+                        taskQueueManager.UpdateValidationStatus(task, true, result);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        taskQueueManager.UpdateValidationStatus(task, false, "");
+                    }
+                    catch (Exception ex)
+                    {
+                        taskQueueManager.UpdateValidationStatus(task, false, ex.Message);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        taskQueueManager.UpdateProgress();
+                    }
+                }, token));
+            }
+
+            await Task.WhenAll(tasks);
+        }
+
+        private async Task<string> PerformValidationAsync(string filePath, CancellationToken token)
         {
             try
             {
@@ -240,8 +279,32 @@ namespace LRParquetsDupChecker
                         validationResults.Add($"Extra Columns: {string.Join(", ", extraColumns)}");
                     }
                 }
+                UpdateValidationDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch);
+                
+                return string.Join(" | ", validationResults);
+            }
+            catch (Exception ex)
+            {
+                return $"Error: {ex.Message}";
+            }
+        }
 
-                // 3. Get primary key columns
+        private async Task<string> PerformBusinessLogicAsync(string filePath, CancellationToken token)
+        {
+            try
+            {
+                string fileName = Path.GetFileName(filePath);
+                
+                var fileConfig = pkMasterInfo?.ParquetFiles
+                    .FirstOrDefault(kv => kv.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                    .Value;
+
+                if (fileConfig == null)
+                {
+                    return "No config found in Data Dictionary";
+                }
+
+                List<string> validationResults = new List<string>();
                 List<string> primaryKeyColumns = fileConfig.Columns?
                     .Where(c => c.IsPrimaryKey)
                     .Select(c => c.Name)
@@ -249,19 +312,17 @@ namespace LRParquetsDupChecker
 
                 if (primaryKeyColumns.Any())
                 {
-                    // 4. Perform duplicate and null checks on PK columns
                     var dataQualityResults = await PerformDataQualityChecksAsync(filePath, primaryKeyColumns, token);
                     validationResults.Add($"Duplicates: {dataQualityResults.DuplicatesFound}");
                     validationResults.Add($"Nulls: {dataQualityResults.NullsFound}");
 
                     // Update DataGridView with results
-                    UpdateDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch,
-                                     dataQualityResults.DuplicatesFound, dataQualityResults.NullsFound);
+                    UpdateQualityResultsDataGridRow(fileName, dataQualityResults.DuplicatesFound, dataQualityResults.NullsFound);
                 }
                 else
                 {
                     validationResults.Add("No PK columns defined");
-                    UpdateDataGridRow(fileName, allColumnsExist, allColumnsExist, columnSequenceMatch, 0, 0);
+                    UpdateQualityResultsDataGridRow(fileName, 0, 0);
                 }
 
                 return string.Join(" | ", validationResults);
@@ -328,13 +389,6 @@ namespace LRParquetsDupChecker
             return results;
         }
 
-        public class ColumnAnalysisResult
-        {
-            public string Expected { get; set; }
-            public string ClosestActual { get; set; }
-            public string DifferenceType { get; set; }
-            public int LevenshteinDistance { get; set; }
-        }
         public static int LevenshteinDistance(string s, string t)
         {
             if (string.IsNullOrEmpty(s)) return t?.Length ?? 0;
@@ -452,12 +506,12 @@ namespace LRParquetsDupChecker
             return keyBuilder.ToString();
         }
 
-        private void UpdateDataGridRow(string fileName, bool schemaMatch, bool columnNamesMatch, bool columnSequenceMatch, int duplicatesFound, int nullsFound)
+        private void UpdateValidationDataGridRow(string fileName, bool schemaMatch, bool columnNamesMatch, bool columnSequenceMatch)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<string, bool, bool, bool, int, int>(
-                    UpdateDataGridRow), fileName, schemaMatch, columnNamesMatch, columnSequenceMatch, duplicatesFound, nullsFound);
+                Invoke(new Action<string, bool, bool, bool>(
+                    UpdateValidationDataGridRow), fileName, schemaMatch, columnNamesMatch, columnSequenceMatch);
                 return;
             }
 
@@ -472,6 +526,32 @@ namespace LRParquetsDupChecker
                     row.Cells[ArtifactColumns.SchemaMatch].Value = schemaMatch;
                     row.Cells[ArtifactColumns.ColumnNamesMatch].Value = columnNamesMatch;
                     row.Cells[ArtifactColumns.ColumnSequenceMatch].Value = columnSequenceMatch;
+                    if(!(schemaMatch && columnNamesMatch && columnSequenceMatch))
+                    {
+                        row.DefaultCellStyle.BackColor = Color.FromArgb(245, 200, 200);
+                    }
+                    break;
+                }
+            }
+        }
+
+        private void UpdateQualityResultsDataGridRow(string fileName, int duplicatesFound, int nullsFound)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<string, int, int>(
+                    UpdateQualityResultsDataGridRow), fileName, duplicatesFound, nullsFound);
+                return;
+            }
+
+            // Find the row with matching filename
+            foreach (DataGridViewRow row in dataGridView1.Rows)
+            {
+                if (row.IsNewRow) continue;
+
+                var rowFileName = row.Cells[ArtifactColumns.FileName].Value?.ToString();
+                if (rowFileName != null && rowFileName.Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                {
                     row.Cells[ArtifactColumns.DuplicateCheckDone].Value = true;
                     row.Cells[ArtifactColumns.DuplicatesFound].Value = duplicatesFound;
                     row.Cells[ArtifactColumns.NullsFound].Value = nullsFound;
